@@ -17,7 +17,8 @@ function glowTexture() {
 }
 
 export class Being {
-  constructor(scene) {
+  constructor(scene, { groundHeight = () => 0 } = {}) {
+    this.groundHeight = groundHeight;
     this.root = new THREE.Group(); // world position
     this.mover = new THREE.Group(); // yaw
     this.body = new THREE.Group(); // bob / squash
@@ -112,7 +113,7 @@ export class Being {
     this.groundGlow.position.y = 0.07;
     this.mover.add(this.groundGlow);
 
-    this.light = new THREE.PointLight(0x7fe8ff, 3, 5, 1);
+    this.light = new THREE.PointLight(0x7fe8ff, 4, 8, 1);
     this.light.position.y = 0.7;
     this.mover.add(this.light);
 
@@ -134,7 +135,7 @@ export class Being {
 
   /** World position just above the head (for the thought bubble). */
   getHeadPosition(out) {
-    return out.copy(this.root.position).setY(this.body.position.y + 0.95 * this.evoScale);
+    return out.copy(this.root.position).setY(this.root.position.y + this.body.position.y + 0.95 * this.evoScale);
   }
 
   /** Walk along a list of points. Resolves on arrival. */
@@ -147,7 +148,10 @@ export class Being {
     });
   }
 
-  lookAtCamera() { this.targetYaw = Math.PI / 4; }
+  /** Turn to face a world position (e.g. the camera). */
+  faceToward(x, z) {
+    this.targetYaw = Math.atan2(x - this.root.position.x, z - this.root.position.z);
+  }
   celebrate() { this.celebrateT = 0.7; }
   setSleeping(on) { this.sleeping = on; }
 
@@ -190,6 +194,10 @@ export class Being {
       }
     }
 
+    // Follow the ground (sidewalk curbs)
+    const gh = this.groundHeight(this.root.position.x, this.root.position.z);
+    this.root.position.y += (gh - this.root.position.y) * Math.min(1, dt * 12);
+
     // Smooth turning (shortest angle)
     let diff = this.targetYaw - this.mover.rotation.y;
     diff = Math.atan2(Math.sin(diff), Math.cos(diff));
@@ -227,7 +235,7 @@ export class Being {
     const pulse = Math.sin(t * 3) * 0.08;
     this.halo.material.opacity = (this.sleeping ? 0.3 : 0.48) + pulse;
     this.groundGlow.material.opacity = 0.5 - (this.body.position.y - this.baseY) * 0.4;
-    this.light.intensity = (this.sleeping ? 1.6 : 3) + pulse * 6;
+    this.light.intensity = (this.sleeping ? 2.5 : 4.5) + pulse * 6;
     this.tipMat.color.setHSL(0.14, 1, 0.75 + Math.sin(t * 5) * 0.1);
 
     // Sparkles orbit the being

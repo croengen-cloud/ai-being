@@ -7,151 +7,153 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet" />
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
   </script>
   <style>
     :root {
-      --ink: #4a3f6b;
-      --paper: #fffaf3;
-      --accent: #ff8fab;
-      --accent-dark: #e86f8f;
-      --sky: #7fd8ff;
+      --ink: #f4eefc;
+      --dim: rgba(244, 238, 252, 0.65);
+      --box: rgba(14, 10, 32, 0.78);
+      --edge: rgba(200, 180, 255, 0.55);
+      --orange: #ffb35c;
+      --pink: #ff6fae;
+      --cyan: #7fe8ff;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0; height: 100%; overflow: hidden;
-      background: #2b2640;
-      font-family: 'Fredoka', 'Trebuchet MS', system-ui, sans-serif;
+      background: #0b0918;
+      font-family: 'VT323', 'Courier New', monospace;
       color: var(--ink);
     }
     #app { position: fixed; inset: 0; display: grid; place-items: center; }
 
     #stage {
       position: relative; width: 100vw; height: 100vh; overflow: hidden;
-      container-type: size;
-      background: linear-gradient(180deg, #a8c8ff, #ffd6c9);
+      container-type: size; background: #1a1430;
     }
-    #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    /* Rendered at low resolution and scaled up with hard pixels */
+    #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+    /* Very faint scanlines: CRT/TV feel, no modern post-processing */
+    #stage::after {
+      content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 3;
+      background: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.08) 0 1px, transparent 1px 3px);
+    }
 
     /* ---------- HUD ---------- */
-    #hud-top { position: absolute; top: 3cqmin; left: 3.5cqmin; pointer-events: none; z-index: 5; }
+    #hud-top { position: absolute; top: 4cqmin; left: 4cqmin; pointer-events: none; z-index: 5; }
     #day-counter {
-      font-weight: 700; font-size: 11cqmin; line-height: 0.95; letter-spacing: 0.02em;
+      font-family: 'Press Start 2P', 'VT323', monospace;
+      font-size: 7.5cqmin; line-height: 1; letter-spacing: 0.04em;
       color: #fff;
-      -webkit-text-stroke: 0.45cqmin var(--ink); paint-order: stroke fill;
-      text-shadow: 0 0.7cqmin 0 rgba(74, 63, 107, 0.35);
+      text-shadow: 0.5cqmin 0.5cqmin 0 #2a1650, 0 0 2.5cqmin rgba(255, 140, 90, 0.55);
     }
-    #day-counter.pop { animation: pop 0.6s cubic-bezier(.2, 1.6, .4, 1); }
-    @keyframes pop { 0% { transform: scale(0.6); } 100% { transform: scale(1); } }
+    #day-counter.pop { animation: pop 0.6s steps(6); }
+    @keyframes pop { 0% { transform: scale(0.6); opacity: 0.2; } 100% { transform: scale(1); opacity: 1; } }
     #status {
-      display: inline-block; margin-top: 1.2cqmin; padding: 0.5em 0.9em;
-      font-size: 2.4cqmin; font-weight: 600;
-      background: rgba(255, 250, 243, 0.88); border-radius: 999px;
-      box-shadow: 0 0.4cqmin 0 rgba(74, 63, 107, 0.15);
+      display: inline-block; margin-top: 1.8cqmin; padding: 0.15em 0.6em;
+      font-size: 3.4cqmin; color: var(--orange);
+      background: var(--box); border: 2px solid var(--edge);
     }
 
-    /* ---------- Location labels ---------- */
+    /* ---------- Destination label ---------- */
     #labels { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
     .label {
       position: absolute; left: 0; top: 0;
-      font-size: 1.9cqmin; font-weight: 600; white-space: nowrap;
-      padding: 0.35em 0.8em; border-radius: 999px;
-      background: rgba(255, 250, 243, 0.9); color: var(--ink);
-      box-shadow: 0 0.3cqmin 0 rgba(74, 63, 107, 0.18);
-      transition: background 0.25s, color 0.25s, scale 0.25s;
+      font-size: 3cqmin; white-space: nowrap; padding: 0.1em 0.6em;
+      color: #fff; background: var(--box); border: 2px solid var(--cyan);
+      opacity: 0; transition: opacity 0.4s;
     }
-    .label.active { background: var(--accent); color: #fff; scale: 1.15; }
+    .label.active { opacity: 1; }
+    .label.offscreen { opacity: 0; }
 
-    /* ---------- Thought bubble ---------- */
+    /* ---------- Thought box ---------- */
     #bubble {
       position: absolute; left: 0; top: 0; z-index: 4;
-      max-width: 40cqw; padding: 1em 1.2em;
-      font-size: 3cqmin; line-height: 1.3; font-weight: 500;
-      background: var(--paper); border: 0.4cqmin solid var(--ink); border-radius: 1.4em;
-      box-shadow: 0 0.8cqmin 0 rgba(74, 63, 107, 0.25);
-      opacity: 0; scale: 0.85; transform-origin: var(--tail-x, 50%) 100%;
-      transition: opacity 0.25s, scale 0.3s cubic-bezier(.2, 1.4, .4, 1);
+      max-width: 44cqw; padding: 0.55em 0.9em 0.7em;
+      font-size: 4cqmin; line-height: 1.05;
+      background: var(--box); border: 2px solid var(--edge);
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+      opacity: 0; transition: opacity 0.3s;
       pointer-events: none;
     }
-    #bubble.visible { opacity: 1; scale: 1; }
+    #bubble.visible { opacity: 1; }
     #bubble::before, #bubble::after {
-      content: ''; position: absolute; background: var(--paper);
-      border: 0.4cqmin solid var(--ink); border-radius: 50%;
+      content: ''; position: absolute; background: var(--box); border: 2px solid var(--edge);
     }
-    #bubble::before { width: 1.1em; height: 1.1em; left: calc(var(--tail-x, 50%) - 0.55em); bottom: -1.2em; }
-    #bubble::after { width: 0.6em; height: 0.6em; left: calc(var(--tail-x, 50%) - 0.3em); bottom: -2em; }
-    .bubble-meta { font-size: 0.62em; font-weight: 700; color: var(--accent-dark); margin-bottom: 0.35em; text-transform: uppercase; letter-spacing: 0.04em; }
+    #bubble::before { width: 0.55em; height: 0.55em; left: calc(var(--tail-x, 50%) - 0.27em); bottom: -0.9em; }
+    #bubble::after { width: 0.3em; height: 0.3em; left: calc(var(--tail-x, 50%) - 0.15em); bottom: -1.45em; }
+    .bubble-meta { font-size: 0.72em; color: var(--orange); margin-bottom: 0.2em; text-transform: uppercase; letter-spacing: 0.05em; }
     .bubble-text .ghost { opacity: 0; }
 
     /* ---------- Banner ---------- */
     #banner {
       position: absolute; inset: 0; z-index: 6; display: grid; place-content: center; text-align: center;
-      background: radial-gradient(circle, rgba(43, 38, 64, 0.55), rgba(43, 38, 64, 0.15) 70%);
-      opacity: 0; pointer-events: none; transition: opacity 0.45s;
+      background: rgba(6, 4, 16, 0.7);
+      opacity: 0; pointer-events: none; transition: opacity 0.5s;
     }
     #banner.visible { opacity: 1; }
     .banner-title {
-      font-size: 13cqmin; font-weight: 700; color: #fff; line-height: 1;
-      -webkit-text-stroke: 0.5cqmin var(--ink); paint-order: stroke fill;
-      text-shadow: 0 0.8cqmin 0 rgba(74, 63, 107, 0.4);
+      font-family: 'Press Start 2P', monospace; font-size: 9cqmin; color: #fff; line-height: 1.1;
+      text-shadow: 0.6cqmin 0.6cqmin 0 #3a1a6a, 0 0 3cqmin rgba(255, 120, 80, 0.6);
     }
-    #banner.visible .banner-title { animation: pop 0.7s cubic-bezier(.2, 1.6, .4, 1); }
-    .banner-sub { margin-top: 1.5cqmin; font-size: 3cqmin; font-weight: 600; color: #fff; text-shadow: 0 0.3cqmin 0.6cqmin rgba(43, 38, 64, 0.6); padding: 0 4cqmin; }
+    .banner-sub { margin-top: 2.5cqmin; font-size: 4.2cqmin; color: var(--orange); padding: 0 4cqmin; }
 
     /* ---------- Controls ---------- */
     #controls {
-      position: absolute; left: 50%; bottom: 3cqmin; translate: -50% 0; z-index: 5;
-      display: flex; flex-direction: column; align-items: center; gap: 1.2cqmin;
+      position: absolute; left: 50%; bottom: 3.5cqmin; translate: -50% 0; z-index: 5;
+      display: flex; flex-direction: column; align-items: center; gap: 1.4cqmin;
     }
     button {
-      font: inherit; font-weight: 600; color: var(--ink); cursor: pointer;
-      border: 0.35cqmin solid var(--ink); border-radius: 999px;
-      background: var(--paper); padding: 0.45em 1em; font-size: 1.9cqmin;
-      box-shadow: 0 0.45cqmin 0 var(--ink);
-      transition: translate 0.1s, box-shadow 0.1s, filter 0.2s;
+      font: inherit; font-size: 3cqmin; color: var(--ink); cursor: pointer;
+      background: var(--box); border: 2px solid var(--edge); padding: 0.1em 0.8em;
     }
-    button:hover { filter: brightness(1.05); }
-    button:active { translate: 0 0.4cqmin; box-shadow: 0 0.05cqmin 0 var(--ink); }
-    button:disabled { cursor: default; filter: saturate(0.4); opacity: 0.85; }
-    button.primary { background: var(--accent); color: #fff; font-size: 3.2cqmin; padding: 0.4em 1.4em; font-weight: 700; }
+    button:hover { border-color: #fff; }
+    button:active { translate: 0 2px; }
+    button:disabled { cursor: default; opacity: 0.6; }
+    button.primary {
+      font-family: 'Press Start 2P', monospace; font-size: 2.4cqmin; padding: 0.9em 1.4em;
+      color: #fff; border-color: var(--orange); box-shadow: 0 0 2cqmin rgba(255, 150, 80, 0.35);
+    }
+    button.primary:not(:disabled) { animation: blink 1.6s steps(2) infinite; }
+    @keyframes blink { 50% { border-color: var(--pink); } }
     .small-row { display: flex; gap: 1cqmin; align-items: center; }
-    .hint { font-size: 1.5cqmin; color: rgba(74, 63, 107, 0.75); font-weight: 600; }
+    .hint { font-size: 2.4cqmin; color: var(--dim); }
 
     /* ---------- Diary ---------- */
     #diary {
       position: absolute; top: 3cqmin; right: 3cqmin; bottom: 3cqmin; z-index: 7;
-      width: min(440px, 86cqw); display: flex; flex-direction: column;
-      background: var(--paper); border: 0.35cqmin solid var(--ink); border-radius: 1.2rem;
-      box-shadow: 0 0.6cqmin 0 rgba(74, 63, 107, 0.3);
-      transition: translate 0.35s cubic-bezier(.3, 1.2, .5, 1), opacity 0.3s;
+      width: min(460px, 88cqw); display: flex; flex-direction: column;
+      background: rgba(12, 9, 28, 0.92); border: 2px solid var(--edge);
+      transition: translate 0.35s, opacity 0.3s;
     }
     #diary.hidden { translate: 110% 0; opacity: 0; pointer-events: none; }
-    #diary header { display: flex; justify-content: space-between; align-items: center; padding: 0.9rem 1.1rem; border-bottom: 2px dashed rgba(74, 63, 107, 0.25); }
-    #diary h2 { margin: 0; font-size: 1.4rem; }
-    #diary header button { font-size: 0.95rem; }
-    #diary-list { overflow-y: auto; padding: 0.6rem 1.1rem 1.2rem; }
-    .diary-day h3 { margin: 0.9rem 0 0.4rem; font-size: 1.05rem; color: var(--accent-dark); }
-    .diary-entry { margin: 0 0 0.6rem; padding: 0.55rem 0.75rem; background: #fff; border-radius: 0.8rem; border: 1.5px solid rgba(74, 63, 107, 0.15); font-size: 0.95rem; line-height: 1.35; }
-    .diary-entry .where { font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.75; }
-    .diary-entry .read { font-size: 0.82rem; opacity: 0.7; margin-top: 0.25rem; font-style: italic; }
-    .diary-empty { opacity: 0.7; padding: 1rem 0; }
+    #diary header { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; border-bottom: 2px dashed var(--edge); }
+    #diary h2 { margin: 0; font-family: 'Press Start 2P', monospace; font-size: 1rem; color: var(--orange); }
+    #diary header button { font-size: 1.2rem; }
+    #diary-list { overflow-y: auto; padding: 0.4rem 1rem 1rem; font-size: 1.3rem; line-height: 1.1; }
+    .diary-day h3 { margin: 0.9rem 0 0.4rem; font-size: 1.4rem; color: var(--pink); font-weight: normal; }
+    .diary-entry { margin: 0 0 0.5rem; padding: 0.4rem 0.6rem; border: 1px solid rgba(200, 180, 255, 0.25); background: rgba(255, 255, 255, 0.03); }
+    .diary-entry .where { color: var(--cyan); font-size: 1.05rem; text-transform: uppercase; }
+    .diary-entry .read { font-size: 1.05rem; color: var(--dim); margin-top: 0.2rem; }
+    .diary-empty { color: var(--dim); padding: 1rem 0; }
 
     /* ---------- 9:16 vertical mode (TikTok) ---------- */
-    .vertical #hud-top { top: 8cqh; left: 5cqmin; }
-    .vertical #day-counter { font-size: 18cqmin; }
-    .vertical #status { font-size: 4.2cqmin; }
-    .vertical .label { font-size: 3.2cqmin; }
-    .vertical #bubble { max-width: 78cqw; font-size: 4.6cqmin; }
-    .vertical .banner-title { font-size: 20cqmin; }
-    .vertical .banner-sub { font-size: 5cqmin; }
-    .vertical #controls { bottom: 6cqh; }
-    .vertical button { font-size: 3.4cqmin; }
-    .vertical button.primary { font-size: 6cqmin; }
-    .vertical .hint { font-size: 2.8cqmin; }
+    .vertical #hud-top { top: 9cqh; left: 6cqmin; }
+    .vertical #day-counter { font-size: 12.5cqmin; }
+    .vertical #status { font-size: 5.6cqmin; }
+    .vertical .label { font-size: 5cqmin; }
+    .vertical #bubble { max-width: 84cqw; font-size: 6.6cqmin; }
+    .vertical .banner-title { font-size: 12cqmin; }
+    .vertical .banner-sub { font-size: 6.4cqmin; }
+    .vertical #controls { bottom: 7cqh; }
+    .vertical button { font-size: 5cqmin; }
+    .vertical button.primary { font-size: 4cqmin; }
+    .vertical .hint { font-size: 4cqmin; text-align: center; padding: 0 4cqmin; }
 
-    /* Clean recording mode (press H): hide everything that isn't part of the show */
+    /* Clean recording mode (press H) */
     .clean #controls { display: none; }
   </style>
 </head>
@@ -168,7 +170,7 @@
 
       <div id="hud-top">
         <div id="day-counter">DAY <span id="day-num">1</span></div>
-        <div id="status">Morning · at home</div>
+        <div id="status">Dusk · at home</div>
       </div>
 
       <div id="banner"><div class="banner-title"></div><div class="banner-sub"></div></div>
@@ -184,7 +186,7 @@
       </div>
 
       <aside id="diary" class="hidden" aria-label="Diary">
-        <header><h2>Diary</h2><button id="btn-diary-close">Close</button></header>
+        <header><h2>DIARY</h2><button id="btn-diary-close">Close</button></header>
         <div id="diary-list"></div>
       </aside>
     </div>

@@ -1,7 +1,15 @@
 # AI Being — Phase 1
 
-A tiny low-poly district with a glowing AI being that explores it day by day.
+An empty early-2000s (PS2/Dreamcast-era) city at dusk, and a glowing AI being —
+the only living thing in it — that explores it day by day.
 Plain ES modules + Three.js from a CDN (import map), no build step.
+
+Look: box buildings with procedural window textures, street lamps, traffic lights,
+crosswalks, neon signs, wires and fences; purple-orange sky with a big moon, distance
+fog, low internal resolution (480p, 640p in 9:16) scaled up with hard pixels. No shadow
+maps or post-processing, so it stays light on normal hardware. The camera follows the
+being in third person (wide street shot when idle, behind it while walking, close-up when
+it thinks).
 
 ## Run
 
@@ -25,8 +33,8 @@ A local server is required (ES modules and `fetch` of the txt files don't work o
 
 | File | Purpose |
 | --- | --- |
-| `main.js` | Boot, render loop, save/load, day sequence |
-| `world.js` | District, buildings, paths (navigation graph), lighting, time of day |
+| `main.js` | Boot, render loop, third-person camera, save/load, day sequence |
+| `world.js` | City, buildings, street props, navigation graph, sky, fog, time of day (dusk → night) |
 | `being.js` | The being: mesh, walking, blinking, evolution visuals |
 | `brain.js` | `decideNextAction(state)` — scripted now, Ollama-ready for Phase 2 |
 | `ui.js` | Day counter, thought bubble, labels, banner, diary |

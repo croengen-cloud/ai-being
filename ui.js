@@ -102,7 +102,9 @@ export function positionBubble(x, y) {
   const gap = Math.min(W, el.stage.clientHeight) * 0.06;
   const margin = 10;
   const left = Math.max(margin, Math.min(W - bw - margin, x - bw / 2));
-  const top = Math.max(margin, y - bh - gap);
+  const hud = document.getElementById('hud-top');
+  const minTop = hud ? hud.offsetTop + hud.offsetHeight + margin : margin;
+  const top = Math.max(minTop, y - bh - gap);
   el.bubble.style.left = `${left}px`;
   el.bubble.style.top = `${top}px`;
   el.bubble.style.setProperty('--tail-x', `${Math.max(20, Math.min(bw - 20, x - left))}px`);
@@ -120,9 +122,10 @@ export function createLabels(locations) {
   }
 }
 
-export function positionLabel(id, x, y) {
+export function positionLabel(id, x, y, visible = true) {
   const d = labels[id];
   if (!d) return;
+  d.classList.toggle('offscreen', !visible);
   const half = d.offsetWidth / 2 + 6;
   const cx = Math.max(half, Math.min(el.stage.clientWidth - half, x));
   d.style.transform = `translate(${cx}px, ${y}px) translate(-50%, -100%)`;
