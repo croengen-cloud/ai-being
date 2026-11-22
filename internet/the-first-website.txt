@@ -1,0 +1,7 @@
+The World Wide Web was invented by Tim Berners-Lee while he was working at CERN, the European research laboratory near Geneva.
+
+The first website went online in 1991. It lived at info.cern.ch and explained what the web was, how to make your own pages, and how to search for information.
+
+It had no pictures, no videos and no adverts. It was just text and links: words that you could click to jump to other words.
+
+Today there are well over a billion websites. Every one of them still works on the same simple idea: a page, a link, and a click.
