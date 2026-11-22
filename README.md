@@ -35,10 +35,17 @@ A local server is required (ES modules and `fetch` of the txt files don't work o
 | --- | --- |
 | `main.js` | Boot, render loop, third-person camera, save/load, day sequence |
 | `world.js` | City, buildings, street props, navigation graph, sky, fog, time of day (dusk → night) |
-| `being.js` | The being: mesh, walking, blinking, evolution visuals |
+| `being.js` | The mushroom bot: pixel-screen face (neutral, curious, happy, sad, scared, thinking, sleep), legs, glowing cap and its growth |
 | `brain.js` | `decideNextAction(state)` — scripted now, Ollama-ready for Phase 2 |
 | `ui.js` | Day counter, thought bubble, labels, banner, diary |
 | `library/`, `internet/` | Reading material (`index.json` lists the txt files) |
+
+## Growth
+
+The cap starts tiny on Day 1. Every place visited adds knowledge: the cap grows, gains
+glowing spots, and small mushrooms sprout from the shell. From ~5 visits on, the cap
+colour shifts towards the being's strongest interest (library violet, café cyan, park
+mint, shop pink); the spots take the second-strongest.
 
 ## Phase 2 (prepared)
 

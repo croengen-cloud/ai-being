@@ -143,8 +143,8 @@ function talkCameraPos(out) {
   const f = LOCATIONS[currentLoc].facing;
   const b = being.root.position;
   const side = { x: f.z, z: -f.x };
-  const dist = 5.2;
-  return out.set(b.x + f.x * dist + side.x * 1.9, b.y + 1.8, b.z + f.z * dist + side.z * 1.9);
+  const dist = vertical ? 3.6 : 3;
+  return out.set(b.x + f.x * dist + side.x * 1.1, b.y + 1.15, b.z + f.z * dist + side.z * 1.1);
 }
 
 function cameraTargets(t) {
@@ -158,7 +158,7 @@ function cameraTargets(t) {
     cam.wantLook.set(b.x + fx * 4, b.y + 1.3, b.z + fz * 4);
   } else if (cam.mode === 'talk') {
     talkCameraPos(cam.wantPos);
-    cam.wantLook.set(b.x - f.x * 0.8, b.y + 1.35, b.z - f.z * 0.8);
+    cam.wantLook.set(b.x - f.x * 0.8, b.y + (vertical ? 1.0 : 0.8), b.z - f.z * 0.8);
   } else {
     // Wide, low shot from the road, looking down the street past the being
     const side = { x: f.z, z: -f.x };
@@ -248,10 +248,14 @@ async function walkTo(locationId) {
   currentLoc = locationId;
 }
 
-async function say(thought, meta) {
+async function say(thought, meta, mood = 'neutral') {
+  being.setEmotion('thinking');
+  await wait(1100);
+  being.setEmotion(mood);
   await ui.showThought(thought, meta);
   await wait(1800 + thought.length * 30);
   ui.hideThought();
+  being.setEmotion('neutral');
   await wait(400);
 }
 
@@ -293,7 +297,7 @@ async function runDay() {
       stopsPlanned = action.stopsPlanned ?? 3;
       setCamMode('talk');
       being.celebrate();
-      await say(action.thought, '🏠 Home · dusk');
+      await say(action.thought, '🏠 Home · dusk', action.mood);
       continue;
     }
 
@@ -308,7 +312,7 @@ async function runDay() {
       being.celebrate();
       ui.setStatus(`${timeLabel()} · at the ${loc.name}`);
       const meta = action.reading && loc.verb ? `${loc.emoji} ${loc.verb}: ${action.reading.title}` : `${loc.emoji} ${loc.name}`;
-      await say(action.thought, meta);
+      await say(action.thought, meta, action.mood);
 
       today.push(action.location);
       state.visited[action.location] = (state.visited[action.location] ?? 0) + 1;
@@ -332,7 +336,7 @@ async function runDay() {
     setCamMode('talk');
     timeTarget = 1;
     ui.setStatus('Night · at home');
-    await say(action.thought, '🏠 Home · night');
+    await say(action.thought, '🏠 Home · night', action.mood);
     state.diary.push({ day, location: 'home', thought: action.thought, reading: null, at: new Date().toISOString() });
     break;
   }
@@ -364,4 +368,4 @@ window.addEventListener('keydown', (e) => {
 });
 
 // Handy for debugging / recording from the console
-window.aiBeing = { get state() { return state; }, runDay, setCamMode, setTime: (t) => { timeTarget = timeOfDay = t; world.setTimeOfDay(t); } };
+window.aiBeing = { get state() { return state; }, runDay, setCamMode, being, setTime: (t) => { timeTarget = timeOfDay = t; world.setTimeOfDay(t); } };

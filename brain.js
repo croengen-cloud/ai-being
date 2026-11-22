@@ -4,9 +4,10 @@
 // Phase 2 (prepared, not implemented): ask a local LLM via Ollama.
 //
 // The game only ever calls decideNextAction(state) and expects one of:
-//   { type: 'wake',   thought, stopsPlanned }
-//   { type: 'visit',  location, thought, reading?: { title, source, excerpt } }
-//   { type: 'goHome', location: 'home', thought }
+//   { type: 'wake',   thought, mood, stopsPlanned }
+//   { type: 'visit',  location, thought, mood, reading?: { title, source, excerpt } }
+//   { type: 'goHome', location: 'home', thought, mood }
+// mood: neutral | curious | happy | sad | scared | thinking (shown on the face screen)
 
 export const BRAIN_CONFIG = {
   mode: 'scripted', // 'scripted' | 'ollama' (Phase 2)
@@ -116,6 +117,17 @@ async function pickReading(location, state) {
   return { title: item.title, source: `${folder}/${item.file}`, excerpt: text ? firstSentence(text) : '' };
 }
 
+// Face shown on the screen while the thought is on screen.
+// neutral | curious | happy | sad | scared | thinking
+const MOOD_DEFAULT = { wakeFirst: 'scared', wake: 'happy', library: 'curious', cafe: 'thinking', park: 'happy', shop: 'curious', goHome: 'happy' };
+function moodOf(kind, text) {
+  if (/alive\?|nobody|never ends/i.test(text)) return 'scared';
+  if (/rude|miss |empty|for no one/i.test(text)) return 'sad';
+  if (/\?|wonder|curious|found a word/i.test(text)) return 'curious';
+  if (/nap|settle|sleep|goodnight/i.test(text)) return 'happy';
+  return MOOD_DEFAULT[kind] ?? 'neutral';
+}
+
 // ---------------------------------------------------------------------------
 // Scripted brain (Phase 1)
 // ---------------------------------------------------------------------------
@@ -147,26 +159,25 @@ function chooseLocation(state) {
 async function decideScripted(state) {
   if (state.phase === 'wake') {
     const kind = state.day === 1 ? 'wakeFirst' : 'wake';
+    const thought = pickThought(kind, { day: state.day }, state);
     return {
       type: 'wake',
-      thought: pickThought(kind, { day: state.day }, state),
+      thought,
+      mood: moodOf(kind, thought),
       stopsPlanned: Math.random() < 0.5 ? 3 : 4,
     };
   }
 
   if (state.today.length >= state.stopsPlanned) {
     const places = state.today.map((p) => state.locationNames[p] ?? p).join(', ');
-    return {
-      type: 'goHome',
-      location: 'home',
-      thought: pickThought('goHome', { count: state.today.length, places }, state),
-    };
+    const thought = pickThought('goHome', { count: state.today.length, places }, state);
+    return { type: 'goHome', location: 'home', thought, mood: moodOf('goHome', thought) };
   }
 
   const location = chooseLocation(state);
   const reading = await pickReading(location, state);
   const thought = pickThought(location, { title: reading?.title ?? 'a book', day: state.day }, state);
-  return { type: 'visit', location, thought, reading };
+  return { type: 'visit', location, thought, reading, mood: moodOf(location, thought) };
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +194,7 @@ export function buildPrompt(state) {
     'Your recent diary:',
     ...state.recentDiary.slice(-8).map((d) => `- Day ${d.day}, ${d.location}: ${d.thought}`),
     '',
-    'Reply ONLY with JSON: {"type":"visit"|"goHome","location":"<place>","thought":"<one short sentence, max 20 words>"}',
+    'Reply ONLY with JSON: {"type":"visit"|"goHome","location":"<place>","thought":"<one short sentence, max 20 words>","mood":"neutral|curious|happy|sad|scared|thinking"}',
   ].join('\n');
 }
 
@@ -200,9 +211,9 @@ async function decideWithOllama(state) {
 /** Guards against malformed LLM output. Returns null if unusable. */
 function validateAction(action, state) {
   if (!action || typeof action.thought !== 'string') return null;
-  if (action.type === 'goHome') return { type: 'goHome', location: 'home', thought: action.thought.slice(0, 200) };
+  if (action.type === 'goHome') return { type: 'goHome', location: 'home', thought: action.thought.slice(0, 200), mood: action.mood };
   if (action.type === 'visit' && PLACES.includes(action.location) && !state.today.includes(action.location)) {
-    return { type: 'visit', location: action.location, thought: action.thought.slice(0, 200), reading: action.reading ?? null };
+    return { type: 'visit', location: action.location, thought: action.thought.slice(0, 200), mood: action.mood, reading: action.reading ?? null };
   }
   return null;
 }
