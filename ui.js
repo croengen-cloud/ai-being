@@ -20,6 +20,8 @@ export function init(h) {
     daycard: $('daycard'), daycardTitle: $('daycard-title'), daycardSub: $('daycard-sub'), daycardText: $('daycard-text'),
     toast: $('toast'), title: $('title-screen'),
   });
+  el.caption = $('caption'); el.milestone = $('milestone');
+  el.iqBar = $('iq-bar'); el.iqFill = $('iq-fill'); el.iqNum = $('iq-num'); el.emoNum = $('emo-num'); el.emoCounter = $('emo-counter');
   el.drama = $('drama'); el.inspect = $('inspect'); el.factionPick = $('faction-pick');
   $('btn-inspect-close').addEventListener('click', () => { hideInspect(); h.onInspectClose?.(); });
   el.thoughtWho = el.thought.querySelector('.thought-who');
@@ -190,6 +192,7 @@ export async function showBanner(title, sub = '', ms = 1800) {
 // ---------- End-of-day card ----------
 let dayCardResolve = null, dayCardTimer = 0;
 export function showDayCard(day, text, sub, autoMs = 14000) {
+  el.daycard.classList.remove('endcard');
   el.daycardTitle.textContent = `DAY ${day}`;
   el.daycardSub.textContent = sub;
   el.daycardText.textContent = text;
@@ -324,4 +327,58 @@ function showFactionPicker(factions, onPick) {
     row.append(b);
   }
   el.factionPick.classList.remove('hidden');
+}
+
+// ---------- AI BRAIN (IQ) + emotions ----------
+let shownIQ = -1, shownEmo = -1;
+export function setIQ(iq, jump = false) {
+  const v = Math.round(iq);
+  if (v === shownIQ && !jump) return;
+  shownIQ = v;
+  el.iqFill.style.width = `calc(${Math.max(0, Math.min(100, iq))}% - 0.9cqmin)`;
+  el.iqNum.textContent = `IQ ${v}`;
+  if (jump) for (const n of [el.iqBar, el.iqNum]) { n.classList.remove('jump'); void n.offsetWidth; n.classList.add('jump'); }
+}
+export function setEmotions(n, total = 12) {
+  if (n === shownEmo) return;
+  const grew = shownEmo >= 0 && n > shownEmo;
+  shownEmo = n;
+  el.emoNum.textContent = String(n);
+  el.emoCounter.lastChild.textContent = `/${total}`;
+  if (grew) { el.emoCounter.classList.remove('bump'); void el.emoCounter.offsetWidth; el.emoCounter.classList.add('bump'); }
+}
+
+// ---------- The one caption ----------
+export function caption(item) {
+  if (!item) { el.caption.classList.remove('visible'); return; }
+  if (item.tier >= 3) { el.caption.classList.remove('visible'); return; } // the milestone banner speaks
+  el.caption.textContent = item.text;
+  el.caption.classList.toggle('story', item.tier >= 2);
+  el.caption.classList.remove('visible'); void el.caption.offsetWidth; el.caption.classList.add('visible');
+}
+
+// ---------- Milestone banner ----------
+let msTimer = 0;
+export function showMilestone(ms, ms_ = 5200) {
+  const q = (s) => el.milestone.querySelector(s);
+  q('.ms-emoji').textContent = ms.emoji;
+  q('.ms-title').textContent = ms.title;
+  q('.ms-word').textContent = ms.word;
+  q('.ms-text').textContent = ms.text || '';
+  q('.ms-iq').textContent = `INTELLIGENCE +${Math.round(ms.iqAfter - ms.iqBefore)}`;
+  el.milestone.classList.remove('visible'); void el.milestone.offsetWidth; el.milestone.classList.add('visible');
+  clearTimeout(msTimer);
+  msTimer = setTimeout(() => el.milestone.classList.remove('visible'), ms_);
+}
+export const milestoneVisible = () => el.milestone.classList.contains('visible');
+
+// ---------- End of day card ----------
+export function showEndCard(day, sub, line, ms = 5500) {
+  el.daycard.classList.add('endcard');
+  el.daycardTitle.textContent = `DAY ${day} COMPLETE`;
+  el.daycardSub.textContent = sub;
+  el.daycardText.textContent = line;
+  el.daycard.classList.remove('hidden');
+  clearTimeout(dayCardTimer);
+  return new Promise((r) => { dayCardResolve = r; dayCardTimer = setTimeout(hideDayCard, ms); });
 }

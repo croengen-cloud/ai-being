@@ -168,7 +168,8 @@ export async function planDay(s) {
     `Colony: ${s.population} Mycel (${s.names.slice(0, 12).join(', ')}${s.names.length > 12 ? ', …' : ''}).`,
     `Stores: food ${s.resources.food}, wood ${s.resources.wood}, stone ${s.resources.stone}. Tools: ${s.tools.axes} axes, ${s.tools.spears} spears.`,
     `Buildings: storage ${s.buildings.storage ? 'built' : 'not built'}, ${s.buildings.huts} huts, fire pit ${s.buildings.fireDiscovered ? (s.buildings.fireLit ? 'burning' : 'found, not lit') : 'not found yet'}. Trees left: ${s.treesLeft}.`,
-    `Discoveries: ${s.discoveries.join(', ') || 'none'}. Awareness of the world: ${Math.round(s.awareness * 100)}%.`,
+    `Discoveries: ${s.discoveries.join(', ') || 'none'}.`,
+    ...progressLines(s.progress),
     `Yesterday: ${(s.yesterday ?? []).join(' ') || 'this is the first day.'}`,
     `Creator actions seen: ${(s.creatorLog ?? []).join(' ') || 'none'}.`,
     `Last diary: ${s.lastDiary || 'none'}`,
@@ -178,10 +179,12 @@ export async function planDay(s) {
     '',
     'Give: "goal" (short), "priorities" (0 to 2 each), an optional big "event", a colony "thought" (max 15 words),',
     'and optionally a short "watcherMessage" to the Watcher (max 20 words, signed "— the Mycel"), or an empty string.',
+    'Pick "focusTech": the one next thing the colony tries to learn today, from the list (or "none").',
     'You are the hive mind and feel every secret: "revealPlots" lists the ids of open plots that get discovered this morning',
     '(pick from the list; a plot far along or with loyal witnesses is more likely to be found; keep some secret for drama), or ["none"].',
   ].join('\n');
   const plotIds = (s.social?.openPlots ?? []).map((p) => String(p.id));
+  const techIds = (s.progress?.available ?? []).map(String);
   const schema = {
     type: 'object',
     properties: {
@@ -191,8 +194,9 @@ export async function planDay(s) {
       thought: { type: 'string' },
       watcherMessage: { type: 'string' },
       revealPlots: { type: 'array', items: { type: 'string', enum: ['none', ...plotIds] } },
+      focusTech: { type: 'string', enum: ['none', ...techIds] },
     },
-    required: ['goal', 'priorities', 'event', 'thought', 'watcherMessage', 'revealPlots'],
+    required: ['goal', 'priorities', 'event', 'thought', 'watcherMessage', 'revealPlots', 'focusTech'],
   };
   const out = await tryGemini(prompt, schema);
   if (!out || typeof out !== 'object') return fallback; // revealPlots undefined -> rule-based discovery
@@ -210,7 +214,37 @@ export async function planDay(s) {
     thought: clampWords(out.thought, 15) || fallback.thought,
     watcherMessage: watcher,
     revealPlots: Array.isArray(out.revealPlots) ? out.revealPlots.map(String).filter((id) => plotIds.includes(id)) : null,
+    focusTech: techIds.includes(out.focusTech) ? out.focusTech : null,
   };
+}
+
+function progressLines(p) {
+  if (!p) return [];
+  return [
+    `Intelligence: IQ ${p.iq}/100. Known: ${p.techs.join(', ') || 'nothing yet'}. Feelings they know: ${p.emotions.join(', ')} (${p.emotionCount}/12).`,
+    `Could learn next: ${p.available?.join(', ') || 'nothing today'}.`,
+  ];
+}
+
+const CLIFFHANGERS = {
+  food: 'Their bellies rumble. Where does food come from?',
+  water: 'Somewhere beyond the trees, something is singing.',
+  fire: 'Pim keeps staring at the old ring of stones.',
+  tools: 'A sharp stone. A stick. An idea is forming.',
+  shelter: 'The nights are getting colder.',
+  farming: 'A berry fell into the soil. What happens next?',
+  weapons: 'Something moved in the dark.',
+  symbols: 'Someone scratched a line into the dirt. It looks like a word.',
+  watcher: 'One of them keeps staring at the sky.',
+  none: 'They are watching back now.',
+};
+/** One short end-of-day line that makes people want the next video. */
+export function fallbackCliffhanger(s) {
+  const open = s.social?.openPlots?.[0];
+  if (open && Math.random() < 0.5) return `${open.plotter} is whispering in the dark…`;
+  const next = s.progress?.next ?? 'none';
+  const line = CLIFFHANGERS[next] ?? CLIFFHANGERS.none;
+  return line.replace('Pim', s.names?.[0] ?? 'Pim');
 }
 
 function socialLines(soc) {
@@ -247,15 +281,18 @@ export async function writeDiary(s) {
     `Write tonight's diary entry of the Mycel colony for day ${s.day}. 2 to 3 short sentences, max 60 words total,`,
     'first person plural ("we"), warm, a little funny, a little eerie. Mention a Mycel by name if it fits.',
     'It will be a caption under a short video, so the first sentence must be a hook.',
+    'Also write "cliffhanger": ONE short line (max 9 words) for the end card that teases tomorrow (the next thing they might learn, an open plot, a threat).',
+    ...progressLines(s.progress),
+    (s.progress?.milestonesToday?.length ? `Milestones today: ${s.progress.milestonesToday.join(', ')}.` : ''),
     `Population tonight: ${s.population}. Born today: ${s.stats.born.join(', ') || 'nobody'}. Lost: ${s.stats.lost.join(', ') || 'nobody'}.`,
     (s.drama?.length ? 'The drama of the day matters most; lead with it (who plotted, fought, was exiled or betrayed):' : ''),
     ...(s.drama ?? []).slice(-6).map((e) => `! ${e}`),
     'What happened today:',
     ...s.events.map((e) => `- ${e}`),
   ].join('\n');
-  const schema = { type: 'object', properties: { entry: { type: 'string' } }, required: ['entry'] };
+  const schema = { type: 'object', properties: { entry: { type: 'string' }, cliffhanger: { type: 'string' } }, required: ['entry', 'cliffhanger'] };
   const out = await tryGemini(prompt, schema);
-  return clampWords(out?.entry, 70) || fallback;
+  return { text: clampWords(out?.entry, 70) || fallback, cliffhanger: clampWords(out?.cliffhanger, 10) || fallbackCliffhanger(s) };
 }
 
 // ---------------------------------------------------------------------------

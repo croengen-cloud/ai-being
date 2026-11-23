@@ -12,6 +12,8 @@ export const CLEARING_R = 24;
 export const FIRE_POS = { x: 1.5, z: 3 };
 export const STORAGE_POS = { x: -5, z: 6.5 };
 export const POND = { x: -16.5, z: -3.5, r: 3.4 };
+export const SYMBOL_POS = { x: 4.9, z: 1.2 }; // the carving stone next to the fire
+export const FARM_SPOTS = [[-8.6, 9.6], [-6.4, 10.6], [-9.8, 7.4], [-4.2, 11.2]].map(([x, z]) => ({ x, z }));
 
 function rng(seed) {
   return () => {
@@ -111,7 +113,8 @@ function hideInst(mesh, i) { mesh.setMatrixAt(i, ZERO); }
 
 function blocked(x, z) {
   return isNearStream(x, z, 2.6) || inPond(x, z, 1.8) || pathDist(x, z) < 1.4
-    || Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 4.5 || Math.hypot(x - STORAGE_POS.x, z - STORAGE_POS.z) < 3.5;
+    || Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 4.5 || Math.hypot(x - STORAGE_POS.x, z - STORAGE_POS.z) < 3.5
+    || Math.hypot(x - SYMBOL_POS.x, z - SYMBOL_POS.z) < 1.8 || FARM_SPOTS.some((f) => Math.hypot(x - f.x, z - f.z) < 1.6);
 }
 function freeSpot(minR, maxR, taken, minGap = 2.5) {
   for (let k = 0; k < 300; k++) {
@@ -426,7 +429,9 @@ export async function createForest(lib, { shadowSize = 1024 } = {}) {
     bushes.push(b);
   }
   place('bush', bushItems, { cast: true });
-  const berryMesh = instanced(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, emissive: 0x220011 }), BUSH_N * BERRIES, { cast: false });
+  const FARM_N = FARM_SPOTS.length;
+  const berryMesh = instanced(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, emissive: 0x220011 }), (BUSH_N + FARM_N) * BERRIES, { cast: false });
+  for (let i = BUSH_N * BERRIES; i < (BUSH_N + FARM_N) * BERRIES; i++) hideInst(berryMesh, i);
   function drawBush(b) {
     b.spots.forEach((s, k) => {
       const idx = b.id * BERRIES + k;
@@ -438,6 +443,62 @@ export async function createForest(lib, { shadowSize = 1024 } = {}) {
   }
   bushes.forEach(drawBush);
   scene.add(berryMesh);
+
+  // ---- Farming: planted berry bushes in little dirt beds next to the storage ----
+  const farms = [];
+  const moundMat = std(0x6a4a2e, { flatShading: true });
+  const sproutMat = std(0x4f9a3a, { flatShading: true });
+  function plantBush(spot = FARM_SPOTS[farms.length]) {
+    if (!spot || farms.length >= FARM_N) return null;
+    const y = heightAt(spot.x, spot.z);
+    const g = new THREE.Group();
+    g.position.set(spot.x, y, spot.z);
+    const mound = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.2, 0.22, 9), moundMat);
+    mound.position.y = 0.05; mound.receiveShadow = true;
+    const leaves = new THREE.Mesh(new THREE.IcosahedronGeometry(0.75, 0), sproutMat);
+    leaves.position.y = 0.6; leaves.scale.set(1, 0.85, 1); leaves.castShadow = true;
+    g.add(mound, leaves);
+    scene.add(g);
+    const id = BUSH_N + farms.length;
+    const b = { id, x: spot.x, z: spot.z, y, berries: 1, regrow: 0, color: 0xe8264f, spots: [], farm: true, g };
+    for (let k = 0; k < BERRIES; k++) { const a = (k / BERRIES) * Math.PI * 2; b.spots.push({ x: Math.cos(a) * 0.62, y: R(0.35, 0.85), z: Math.sin(a) * 0.62 }); }
+    farms.push(b); bushes.push(b); drawBush(b);
+    return b;
+  }
+
+  // ---- Symbols: a flat standing stone near the fire that the Mycel carve glowing marks into ----
+  const symbolStone = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.1, 0.45), std(0x8d9599, { flatShading: true }));
+  symbolStone.position.set(SYMBOL_POS.x, heightAt(SYMBOL_POS.x, SYMBOL_POS.z) + 0.95, SYMBOL_POS.z);
+  symbolStone.rotation.set(0.04, Math.atan2(FIRE_POS.x - SYMBOL_POS.x, FIRE_POS.z - SYMBOL_POS.z), -0.05);
+  symbolStone.castShadow = true; symbolStone.receiveShadow = true;
+  scene.add(symbolStone);
+  const glyphCanvas = document.createElement('canvas'); glyphCanvas.width = 128; glyphCanvas.height = 176;
+  const glyphTex = new THREE.CanvasTexture(glyphCanvas);
+  const glyphMat = new THREE.MeshBasicMaterial({ map: glyphTex, transparent: true, depthWrite: false, toneMapped: false, color: 0x8dffe0 });
+  const glyphs = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.8), glyphMat);
+  glyphs.position.z = 0.235;
+  symbolStone.add(glyphs);
+  const GLYPHS = [
+    (g) => { g.arc(0, 0, 14, 0, Math.PI * 2); g.moveTo(0, -14); g.lineTo(0, 14); },
+    (g) => { g.moveTo(-14, 12); g.lineTo(0, -14); g.lineTo(14, 12); g.moveTo(-7, 2); g.lineTo(7, 2); },
+    (g) => { g.moveTo(-14, -10); g.lineTo(14, -10); g.moveTo(-10, 0); g.lineTo(10, 0); g.moveTo(-6, 10); g.lineTo(6, 10); },
+    (g) => { g.arc(0, 0, 6, 0, Math.PI * 2); g.moveTo(-15, 0); g.lineTo(-9, 0); g.moveTo(9, 0); g.lineTo(15, 0); g.moveTo(0, -15); g.lineTo(0, -9); g.moveTo(0, 9); g.lineTo(0, 15); },
+    (g) => { g.moveTo(-14, 14); g.lineTo(-14, -14); g.lineTo(14, 14); g.lineTo(14, -14); },
+    (g) => { g.ellipse(0, 0, 15, 8, 0, 0, Math.PI * 2); g.moveTo(4, 0); g.arc(0, 0, 4, 0, Math.PI * 2); },
+  ];
+  let symbolsCarved = 0;
+  function drawGlyphs() {
+    const g = glyphCanvas.getContext('2d');
+    g.clearRect(0, 0, 128, 176);
+    g.strokeStyle = '#ffffff'; g.lineWidth = 5; g.lineCap = 'round'; g.shadowColor = '#ffffff'; g.shadowBlur = 8;
+    for (let i = 0; i < symbolsCarved; i++) {
+      g.save(); g.translate(i % 2 ? 88 : 40, 32 + Math.floor(i / 2) * 56); g.beginPath(); GLYPHS[i % GLYPHS.length](g); g.stroke(); g.restore();
+    }
+    glyphTex.needsUpdate = true;
+    glyphs.visible = symbolsCarved > 0;
+  }
+  drawGlyphs();
+  function carveSymbol() { if (symbolsCarved < 6) { symbolsCarved++; drawGlyphs(); } return symbolsCarved; }
 
   const logGeo = new THREE.CylinderGeometry(0.28, 0.3, 1.8, 8); logGeo.rotateZ(Math.PI / 2);
   // ---- Fire pit (undiscovered at start) ----
@@ -790,7 +851,12 @@ export async function createForest(lib, { shadowSize = 1024 } = {}) {
     pickBerry(b) { if (b.berries <= 0) return false; b.berries--; drawBush(b); return true; },
     takeItem(it) { if (!it.alive) return false; it.alive = false; drawItem(it); return true; },
     setFire(lit) { fire.lit = lit; },
-    restore({ fallenTrees = [], storageBuilt = false, huts: savedHuts = [], fire: savedFire = {} } = {}) {
+    get symbolsCarved() { return symbolsCarved; },
+    get farmCount() { return farms.length; },
+    plantBush, carveSymbol,
+    restore({ fallenTrees = [], storageBuilt = false, huts: savedHuts = [], fire: savedFire = {}, farms: savedFarms = 0, symbols = 0 } = {}) {
+      for (let i = 0; i < savedFarms; i++) plantBush();
+      symbolsCarved = Math.min(6, symbols); drawGlyphs();
       for (const id of fallenTrees) { const t = trees[id]; if (t) { t.state = 'gone'; drawTree(t); } }
       storage.built = storageBuilt; storage.progress = storageBuilt ? 1 : 0;
       for (const h of savedHuts) { const hut = addHut(h.slot, h.built ? 1 : h.progress ?? 0); if (hut) { hut.damaged = !!h.damaged; hut.faction = h.faction ?? null; if (h.damaged) drawHut(hut); } }

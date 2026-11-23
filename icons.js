@@ -2,12 +2,12 @@
 // emote bubbles (readable from the top-down camera) and task icons over their heads.
 import * as THREE from './vendor/three.module.js';
 
-export const EMOTIONS = ['neutral', 'happy', 'curious', 'scared', 'angry', 'sad', 'hungry', 'love', 'sleep'];
+export const EMOTIONS = ['neutral', 'happy', 'curious', 'scared', 'angry', 'sad', 'hungry', 'love', 'sleep', 'trust', 'pride', 'jealous'];
 
 // Screen colour per emotion, so moods read even when the faces are tiny.
 export const FACE_COLORS = {
   neutral: '#8dffe0', happy: '#8dffb0', curious: '#7fe8ff', scared: '#e8f4ff', angry: '#ff6a55',
-  sad: '#7fa8ff', hungry: '#ffb35c', love: '#ff8fd0', sleep: '#5fbfa8', blink: '#8dffe0',
+  sad: '#7fa8ff', hungry: '#ffb35c', love: '#ff8fd0', sleep: '#5fbfa8', blink: '#8dffe0', trust: '#a8ffcf', pride: '#ffd84a', jealous: '#b8ff5a',
 };
 
 // Pixel faces on a 32×32 grid; p(x, y, w, h) lights pixels.
@@ -50,6 +50,26 @@ const FACES = {
   love: (p) => {
     for (const ox of [5, 19]) HEART.forEach((row, y) => [...row].forEach((c, x) => { if (c === '#') p(ox + x * 2, 9 + y * 2, 2, 2); }));
     p(11, 23, 2, 2); p(13, 25, 6, 2); p(19, 23, 2, 2);
+  },
+  // soft closed eyes, small calm smile
+  trust: (p) => {
+    p(7, 15, 2, 2); p(9, 13, 4, 2); p(13, 15, 2, 2);
+    p(19, 15, 2, 2); p(21, 13, 4, 2); p(25, 15, 2, 2);
+    p(11, 22, 2, 2); p(13, 24, 6, 2); p(19, 22, 2, 2);
+    p(5, 19, 3, 2); p(24, 19, 3, 2);
+  },
+  // eyes closed upwards, chin up, big grin
+  pride: (p) => {
+    p(6, 12, 2, 2); p(8, 10, 4, 2); p(12, 12, 2, 2);
+    p(20, 12, 2, 2); p(22, 10, 4, 2); p(26, 12, 2, 2);
+    p(8, 19, 16, 2); p(9, 21, 2, 2); p(21, 21, 2, 2); p(11, 23, 10, 2);
+    p(26, 3, 2, 5); p(26, 9, 2, 2);
+  },
+  // side glance, one brow down, flat crooked mouth
+  jealous: (p) => {
+    p(6, 9, 7, 2); p(6, 14, 8, 4); p(10, 14, 4, 4);
+    p(19, 11, 7, 2); p(19, 14, 8, 4);
+    p(11, 24, 6, 2); p(17, 23, 5, 2);
   },
   sleep: (p) => { p(7, 16, 6, 2); p(19, 16, 6, 2); p(13, 23, 6, 2); p(23, 3, 6, 2); p(26, 5, 2, 2); p(24, 7, 2, 2); p(23, 9, 6, 2); },
 };

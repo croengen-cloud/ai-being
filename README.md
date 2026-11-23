@@ -25,7 +25,16 @@ A local server is required (ES modules and `fetch` do not work over `file://`).
   the whole clearing, twist two fingers to rotate. **Tap a Mycel** to follow it and see its card
   (name, personality, faction, friends, rivals). After a few seconds without input the **auto camera**
   follows the most interesting action; drama always wins and gets a close shot.
-- **Speed:** 1× / 2× / 4× / pause. One day (day + night) takes about 2 minutes at 1×.
+- **Speed:** 1× / 2× / 4× / pause. One day (day + night) takes about 2:45 at 1×: one day = one video.
+- **Story pacing:** one main event at a time (one caption, the camera on it). Each day has 2–4
+  **milestones** with a big banner and a sound: a tech tree (food → water → fire → tools → shelter →
+  farming → weapons → symbols → awareness of the Watcher), social firsts (birth, leader, theft,
+  betrayal, exile, victory) and **emotions**. The Mycel start with only neutral, hungry and sleepy;
+  joy, curiosity, fear, trust, love, pride, anger, jealousy and grief must be learned, and only learned
+  feelings show on their faces (the screens get brighter and more colourful as they learn).
+- **HUD:** DAY, the AI BRAIN intelligence bar (IQ 0–100, jumps at every milestone), EMOTIONS x/12 and
+  MYCEL. The colony grows slowly (3 by the end of day 1, then 1–3 a day, about 14 at most).
+  Each day ends with a card: DAY N COMPLETE · IQ · MYCEL and a cliffhanger line.
 - **Creator:** rain berries, rain, sunshine, light the fire, send thorn beetles, gift spores, send
   knowledge (a page from the reading material), or write a message to the colony as the Watcher.
 - **Drama:** every Mycel has a personality (brave, greedy, shy, loyal, jealous, curious) and
@@ -105,6 +114,8 @@ The other texts were written for this project.
 | `main.js` | Boot, render loop, day cycle, creator actions |
 | `forest.js` | The clearing: terrain, stream, trees, bushes, items, fire pit, storage, huts, light, spores |
 | `colony.js` | Simulation: needs, tasks, building, crafting, spores, threats, events, scuffles |
+| `progress.js` | Tech tree, learned emotions, firsts, IQ |
+| `director.js` | One main event at a time, milestone pacing, midday crisis, nudges |
 | `social.js` | Personalities, relationships, factions, plots, exile, reconciliation |
 | `assets.js` | Model library: CC0 GLB models from `assets/models/manifest.json`, procedural fallbacks |
 | `effects.js` | Wind sway, water shader, smoke, fireflies, leaves, butterflies, bloom, adaptive quality |

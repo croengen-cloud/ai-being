@@ -79,6 +79,15 @@ function makeColony() {
     onEvent: handleEvent,
     onSound: playSound,
     onChirp: (emotion, m) => audio.chirp(emotion, nearness(m)),
+    onCaption: (item) => ui.caption(item),
+    onMilestone: (ms) => {
+      ui.showMilestone(ms);
+      audio.milestone();
+      ui.setIQ(colony.progress.iq, true);
+      ui.setEmotions(colony.progress.emotionCount);
+      mycelRenderer.setExpressiveness(colony.progress.expressiveness);
+    },
+    onCrisis: (kind) => { if (kind === 'storm') { setRain(true); colony.later(colony.dayLength * 0.12, () => setRain(false)); } },
   });
   colony.day = state.day;
   colony.dayLength = DAY_SECONDS;
@@ -114,36 +123,10 @@ audio.onChange(refreshSound);
 // ---------------------------------------------------------------------------
 // Events -> feed, diary log, thoughts
 // ---------------------------------------------------------------------------
-const BIG = new Set(['discovery', 'fire', 'build', 'treeFall', 'creator', 'love', 'defend', 'watcher']);
-const BAD = new Set(['threat', 'steal', 'lost', 'fight', 'fireOut']);
-let birthsBatch = 0, birthTimer = 0;
-const DRAMA_TAG = { plot: 'CONSPIRACY', plotFound: 'PLOT DISCOVERED', coup: 'COUP', exile: 'EXILED', betrayal: 'BETRAYAL', reconcile: 'RECONCILED', scuffle: 'SCUFFLE', rumor: 'RUMOR', faction: 'FACTIONS', leader: 'NEW LEADER', rivalry: 'RIVALS', friendship: 'FRIENDS', steal: 'THEFT', sabotage: 'SABOTAGE' };
-let lastDramaAt = 0;
 function handleEvent(e) {
-  if (e.drama || DRAMA_TYPES.has(e.type)) {
-    state.dramaToday = [...(state.dramaToday ?? []), e.text].slice(-12);
-    const now = performance.now();
-    // the big drama line: never two within 3 s unless it is a bigger moment
-    if (e.drama && (now - lastDramaAt > 3000 || ['plotFound', 'coup', 'exile', 'rumor'].includes(e.type) || /Watcher/.test(e.text))) {
-      lastDramaAt = now;
-      ui.showDrama(e.text, DRAMA_TAG[e.type] ?? 'DRAMA');
-      if (['plotFound', 'coup', 'betrayal'].includes(e.type)) audio.sfx(e.type, nearness(e));
-    }
-    ui.feed(e.text, ['friendship', 'reconcile', 'leader', 'faction'].includes(e.type) ? 'big' : 'bad');
-    return;
-  }
-  if (e.type === 'birth') {
-    // births come in waves: summarize them in the feed
-    birthsBatch++;
-    clearTimeout(birthTimer);
-    birthTimer = setTimeout(() => {
-      ui.feed(birthsBatch === 1 ? e.text : `${birthsBatch} new Mycel sprouted!`, 'big');
-      birthsBatch = 0;
-    }, 1200);
-    return;
-  }
-  if (['plan', 'craft'].includes(e.type) && Math.random() < 0.5) return; // keep the feed calm
-  ui.feed(e.text, BIG.has(e.type) ? 'big' : BAD.has(e.type) ? 'bad' : '');
+  // the director decides what is shown; here we only keep the day's story for diary and caption
+  if (e.drama || DRAMA_TYPES.has(e.type)) state.dramaToday = [...(state.dramaToday ?? []), e.text].slice(-12);
+  if (['plotFound', 'coup', 'betrayal'].includes(e.type)) audio.sfx(e.type, nearness(e));
 }
 
 // ---------------------------------------------------------------------------
@@ -284,9 +267,9 @@ async function morningPlan() {
   colony.social.morning(Array.isArray(plan.revealPlots) ? plan.revealPlots.filter((id) => id !== 'none') : null);
   if (plan.event === 'berry boom') colony.creator('berries');
   if (plan.event === 'storm') setRain(true);
-  if (plan.event === 'great discovery') colony.awareness = Math.min(1, colony.awareness + 0.05);
-  ui.showThought('The Mycel think', plan.thought);
-  if (plan.watcherMessage) {
+  if (plan.event === 'great discovery') colony.progress.addIQ(1);
+  if (plan.thought) colony.director.say(plan.thought, 'thought', 1);
+  if (plan.watcherMessage && colony.progress.has('watcher')) {
     setTimeout(() => {
       audio.watcher();
       ui.showThought('Message to the Watcher', plan.watcherMessage, { watcher: true, ms: 8000 });
@@ -299,32 +282,44 @@ async function startGame() {
   if (started) return;
   started = true;
   await ui.showBanner(`DAY ${state.day}`, state.day === 1 && !state.colony ? 'A single Mycel wakes up in the clearing' : `${colony.mycel.length} Mycel wake up`, 1700);
+  ui.setIQ(colony.progress.iq); ui.setEmotions(colony.progress.emotionCount);
   morningPlan();
 }
 
 let dayEnding = false;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** End of day: freeze the sim, end card (DAY N COMPLETE · IQ · MYCEL + cliffhanger), then the next morning. */
 async function endDay() {
   if (dayEnding) return;
   dayEnding = true;
   const finished = state.day;
   const summary = { ...hiveSummary(), day: finished, drama: state.dramaToday ?? [] };
   state.dramaToday = [];
+  const fast = !!window.mycel?.fastEnd;
+  const diaryP = brain.writeDiary(summary).catch(() => null);
+  const early = await Promise.race([diaryP, sleep(fast ? 0 : 4500).then(() => null)]);
+  const cliff = early?.cliffhanger || brain.fallbackCliffhanger(summary);
+  ui.caption(null);
+  const card = ui.showEndCard(finished, `IQ ${Math.round(colony.progress.iq)} · ${colony.mycel.length} MYCEL`, cliff, fast ? 50 : 6000);
+  audio.sfx('exile', 0.5);
+  await card;
+
   colony.startDay(finished + 1, null);
   state.day = finished + 1;
   state.colony = colony.serialize();
   saveState(state);
   ui.setDay(state.day);
-  ui.showBanner(`DAY ${state.day}`, `${colony.mycel.length} Mycel wake up`, 1500);
+  ui.showBanner(`DAY ${state.day}`, `${colony.mycel.length} Mycel wake up`, fast ? 10 : 1500);
   dayEnding = false;
   morningPlan();
 
-  const text = await brain.writeDiary(summary);
+  const res = early ?? await diaryP;
   refreshBrainPill();
-  state.diaryEntries.push({ day: finished, text, events: summary.events, population: summary.population, at: new Date().toISOString() });
+  const text = res?.text || brain.fallbackDiary(summary);
+  state.diaryEntries.push({ day: finished, text, cliffhanger: cliff, events: summary.events, population: summary.population, iq: Math.round(summary.progress?.iq ?? 0), at: new Date().toISOString() });
   saveState(state);
-  const hook = summary.drama.at(-1);
-  lastCaption = `🍄 THE MYCEL · Day ${finished} · ${summary.population} Mycel\n${hook ? `${hook}\n` : ''}${text}\n#themycel #mycel #indiedev`;
-  ui.showDayCard(finished, text, `Mycel diary · ${summary.population} Mycel`);
+  const ms = summary.progress?.milestonesToday ?? [];
+  lastCaption = `🍄 THE MYCEL · Day ${finished} · IQ ${Math.round(colony.progress.iq)} · ${summary.population} Mycel\n${ms.length ? `${ms.join(' · ')}\n` : ''}${text}\n${cliff}\n#themycel #mycel #aibrain #indiedev`;
   refreshSettingsPanel();
 }
 
@@ -401,7 +396,7 @@ async function creatorAction(act, text) {
       state.learnings.push({ day: state.day, title: r.title, source: r.source, takeaway: r.takeaway, at: new Date().toISOString() });
       colony.creator('knowledge');
       colony.event('learn', `${m?.name ?? 'A Mycel'} read “${r.title}”: ${r.takeaway}`, m, 6);
-      ui.showThought(`${m?.name ?? 'A Mycel'} read “${r.title}”`, r.thought);
+      colony.director.say(`${m?.name ?? 'A Mycel'} read “${r.title}”: ${r.thought}`, 'learn', 1, m);
       audio.chirp('curious');
     }
     log(CREATOR_TEXT.knowledge);
@@ -430,6 +425,7 @@ async function creatorAction(act, text) {
 // ---------------------------------------------------------------------------
 let simTime = 0;
 function simulate(dt) {
+  if (dayEnding) return;
   simTime += dt;
   colony.cameraPos = camera.position;
   colony.update(dt);
@@ -485,6 +481,9 @@ function frame() {
   if (uiTimer <= 0) {
     uiTimer = 0.25;
     ui.setColonyCount(colony.mycel.length);
+    ui.setIQ(colony.progress.iq);
+    ui.setEmotions(colony.progress.emotionCount);
+    mycelRenderer.setExpressiveness(colony.progress.expressiveness);
     const R = colony.resources;
     ui.setResources({ food: R.food, wood: R.wood, stone: R.stone, tools: colony.countTool('axe') + colony.countTool('spear') });
     ui.setStatus(`${timeLabel(colony.phase)} · ${colony.plan.goal}`);

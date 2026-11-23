@@ -82,8 +82,8 @@ export class Social {
         else this.disband(f);
       }
     }
-    if (pop < 15) return;
-    const want = pop >= 30 ? 3 : 2;
+    if (pop < 8) return;
+    const want = 2;
     if (this.factions.length < want) {
       const cand = c.mycel.filter((m) => !m.exiled && m.grown >= 1 && !this.factions.some((f) => f.leader === m.name))
         .sort((a, b) => this.influence(b) - this.influence(a))[0];
@@ -141,6 +141,7 @@ export class Social {
   planPlots() {
     const c = this.c;
     if (this.plots.filter((p) => !p.done).length >= 2 || c.mycel.length < 6) return;
+    if (!c.progress?.feels('angry') && !c.progress?.feels('jealous')) return; // scheming needs anger or jealousy first
     const schemers = c.mycel.filter((m) => !m.exiled && m.grown >= 1 && (m.trait === 'jealous' || m.trait === 'greedy') && !this.plots.some((p) => !p.done && p.members.includes(m.name)));
     for (const s of schemers) {
       if (Math.random() > 0.35) continue;

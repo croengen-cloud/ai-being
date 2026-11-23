@@ -2,22 +2,26 @@
 // eat, build, craft, flee, defend, sleep, follow, explore, release spores). The daily hive-mind
 // plan (brain.js) only sets priorities; everything else emerges here.
 import * as THREE from './vendor/three.module.js';
-import { CLEARING_R, FIRE_POS, STORAGE_POS, HUT_SLOTS, inPond, POND } from './forest.js';
+import { CLEARING_R, FIRE_POS, STORAGE_POS, HUT_SLOTS, inPond, POND, isNearStream, SYMBOL_POS, FARM_SPOTS } from './forest.js';
+import { Progress } from './progress.js';
+import { Director } from './director.js';
 import { Social, TRAITS } from './social.js';
 import { createSprout, createBeetle, MAX_MYCEL, CAP_COLORS } from './mycel.js';
 
-export const DAY_SECONDS = 120; // one in-game day (day + night) at 1× speed
+export const DAY_SECONDS = 165; // one in-game day (day + night) at 1× speed
 const NIGHT_START = 0.74, NIGHT_END = 0.97;
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
 const SYL = ['pi', 'mo', 'lu', 'ka', 'ro', 'ne', 'ti', 'sa', 'vu', 'mi', 'zo', 'fe', 'bri', 'qua', 'el', 'om', 'ny', 'ash', 'ul', 'ki', 'po', 'wen', 'dra', 'is'];
+// names are made from syllables; skip the few combinations that read as rude words
+const BAD_NAME = /(wenis|penis|anus|anal|nazi|cum|sex|fuk|fag|tit|ass|poo|pis)/i;
 function makeName(used) {
   for (let k = 0; k < 50; k++) {
     const n = pick(SYL) + pick(SYL);
     const name = n[0].toUpperCase() + n.slice(1);
-    if (!used.has(name) && name.length <= 6) { used.add(name); return name; }
+    if (!used.has(name) && name.length <= 6 && !BAD_NAME.test(name)) { used.add(name); return name; }
   }
   return `M${used.size + 1}`;
 }
@@ -57,8 +61,12 @@ export class Colony {
     this.hutSite = null;
     this.dayLength = DAY_SECONDS;
     this.timers = [];
+    this.progress = new Progress(saved?.progress);
+    this.awareness = this.progress.iq / 100;
+    this.director = new Director(this);
+    this.nightSeen = false;
 
-    world.restore({ fallenTrees: saved?.fallenTrees, storageBuilt: saved?.storageBuilt, huts: saved?.huts, fire: saved?.fire });
+    world.restore({ fallenTrees: saved?.fallenTrees, storageBuilt: saved?.storageBuilt, huts: saved?.huts, fire: saved?.fire, farms: saved?.farms, symbols: saved?.symbols });
     world.trees.forEach((t) => { t.onFallen = () => this.event('treeFall', `${t.lastChopper ?? 'A Mycel'} brought a tree down.`, t, 6); });
     if (saved?.mycel?.length) {
       for (const s of saved.mycel.slice(0, MAX_MYCEL)) {
@@ -127,13 +135,60 @@ export class Colony {
   // Events, emotions, sound
   // -------------------------------------------------------------------------
   event(type, text, pos = null, score = 3) {
-    const e = { type, text, day: this.day, phase: this.phase, x: pos?.x, z: pos?.z, drama: score >= 10 };
+    const follow = pos && pos.grown !== undefined ? pos : null;
+    const e = { type, text, day: this.day, phase: this.phase, x: pos?.x, z: pos?.z, drama: score >= 10, score, follow };
     this.events.push(e);
-    if (pos && (!this.interest || score >= (this.interest.score ?? 0) || performance.now() - this.interest.t > 5000)) this.interest = { x: pos.x, z: pos.z, score, t: performance.now() };
+    if (this.events.length > 200) this.events.shift();
     this.hooks.onEvent?.(e);
+    this.learnFromEvent(e, follow);
+    this.director.push(e);
+  }
+
+  /** Firsts and new emotions that an event teaches (become milestones via the director). */
+  learnFromEvent(e, who) {
+    const n = who?.name ?? 'A Mycel';
+    const at = who ?? (e.x !== undefined ? { x: e.x, z: e.z } : null);
+    const feel = (emo, text) => this.progress.earn('emotion', emo, text, at, this.day);
+    const first = (id) => this.progress.earn('first', id, e.text, at, this.day);
+    switch (e.type) {
+      case 'birth': first('birth'); break;
+      case 'love': feel('love', `${n} feels a soft pull towards another Mycel.`); break;
+      case 'friendship': feel('trust', `${n} found a true friend. It feels safe.`); break;
+      case 'scuffle': feel('angry', `${n} felt something hot and sharp inside.`); break;
+      case 'steal': first('theft'); feel('angry', 'Someone took what was ours. Something hot and sharp.'); break;
+      case 'betrayal': first('betrayal'); feel('jealous', `${n} switched sides. The old friends watch with narrowed eyes.`); break;
+      case 'exile': first('exile'); feel('sad', `${n} walks into the dark forest alone. The others feel heavy.`); break;
+      case 'defend': first('victory'); break;
+      case 'faction': if (/is born/.test(e.text)) { first('leader'); feel('jealous', 'Some Mycel follow a leader now. The others watch with narrowed eyes.'); } else if (/Watcher favoured/.test(e.text)) feel('jealous', 'The Watcher chose favourites. The others watch with narrowed eyes.'); break;
+      case 'lost': feel('sad', `${e.text} The colony feels heavy.`); break;
+      case 'threat': feel('scared', 'Something crawled out of the dark. Their screens flicker: fear.'); break;
+      case 'crisis': if (/storm/i.test(e.text)) feel('scared', 'Thunder over the clearing. Their screens flicker: fear.'); break;
+      default:
+    }
+  }
+
+  /** Earn a tech; if it is not a milestone (already known / not yet allowed), log a normal event. */
+  learnTech(id, text, pos, fallbackType = null, score = 6) {
+    const ok = this.progress.earn('tech', id, text, pos, this.day);
+    if (!ok && fallbackType) this.event(fallbackType, text, pos, score);
+    else if (ok) this.events.push({ type: 'learn', text, day: this.day, phase: this.phase });
+    return ok;
+  }
+
+  /** Called by the director when a milestone banner goes up. */
+  onMilestone(ms) {
+    this.awareness = this.progress.iq / 100;
+    if (ms.kind === 'emotion') {
+      // everyone tries the new feeling once
+      this.mycel.forEach((m) => { if (!m.exiled && m.task?.type !== 'sleep') this.setEmotion(m, ms.id, 3); });
+    } else if (ms.kind === 'tech') {
+      this.mycel.forEach((m) => { if (dist(m, ms) < 14 && m.task?.type !== 'sleep') this.setEmotion(m, this.progress.feels('happy') ? 'happy' : 'curious', 2.5); });
+    }
+    this.hooks.onMilestone?.(ms);
   }
 
   setEmotion(m, emotion, lock = 1.5) {
+    if (!this.progress.feels(emotion)) emotion = emotion === 'sad' && m.hunger > 0.6 ? 'hungry' : 'neutral';
     if (m.emotion === emotion) { m.moodLock = Math.max(m.moodLock, lock); return; }
     m.emotion = emotion;
     m.moodLock = lock;
@@ -168,7 +223,7 @@ export class Colony {
       case 'fire':
         w.fire.discovered = true; w.fire.lit = true; w.fire.fuel = 1;
         this.discover('fire', null);
-        this.event('creator', 'A spark fell from above and the fire pit caught flame.', FIRE_POS, 8);
+        if (!this.learnTech('fire', 'A spark fell from the sky into the old stones. Fire!', FIRE_POS)) this.event('creator', 'A spark fell from above and the fire pit caught flame.', FIRE_POS, 8);
         this.mycel.forEach((m) => this.setEmotion(m, dist(m, FIRE_POS) < 8 ? 'curious' : 'happy', 3));
         break;
       case 'beetles':
@@ -183,11 +238,11 @@ export class Colony {
       case 'message':
         // everyone stops and looks up at the Watcher
         this.mycel.forEach((m) => { this.setEmotion(m, Math.random() < 0.55 ? 'curious' : 'scared', 4); m.listen = rand(7, 9); m.moving = 0; });
-        this.awareness = Math.min(1, this.awareness + 0.03);
         this.event('watcher', `The Watcher spoke: “${extra}”`, this.centroid(), 8);
+        if (this.progress.allowed('watcher', this.day)) this.watcherScene();
         break;
       case 'knowledge':
-        this.awareness = Math.min(1, this.awareness + 0.02);
+        this.progress.addIQ(1);
         break;
       default:
     }
@@ -196,6 +251,14 @@ export class Colony {
 
   discover(what, m) {
     if (this.discoveries.has(what)) return;
+    if (what === 'stream') {
+      if (!this.progress.allowed('water', this.day)) return;
+      this.discoveries.add(what);
+      this.stats.discoveries.push(what);
+      this.learnTech('water', `${m?.name ?? 'A Mycel'} followed a sound and found running water.`, m ?? { x: 3, z: -12 }, 'discovery', 7);
+      return;
+    }
+    if (what === 'fire') this.progress.earn('emotion', 'curious', `${m?.name ?? 'A Mycel'} found a ring of old stones. What is it?`, m ?? FIRE_POS, this.day);
     if (what === 'fireLit') { this.discoveries.add(what); this.awareness = Math.min(1, this.awareness + 0.04); return; }
     this.discoveries.add(what);
     this.awareness = Math.min(1, this.awareness + 0.04);
@@ -218,9 +281,13 @@ export class Colony {
     this.hooks.onSound?.('spore', { x, z });
   }
 
+  /** Soft population cap: a small colony for a long time, a little more room once they are wise. */
+  popCap() { return this.progress.has('watcher') ? 16 : 14; }
+
   maxBirthsToday() {
-    if (this.day === 1) return 7;
-    return Math.max(2, Math.min(10, Math.floor(this.mycel.length * 0.35)));
+    const room = Math.max(0, this.popCap() - this.mycel.length - this.sprouts.length + this.stats.born.length);
+    if (this.day === 1) return Math.min(2, room);
+    return Math.min(this.birthQuota ?? 1, room);
   }
 
   tryReproduce(m) {
@@ -228,11 +295,11 @@ export class Colony {
     if (m.sporeCd > 0) return;
     const pending = this.sprouts.length;
     if (this.stats.born.length + pending >= this.maxBirthsToday()) { m.sporeCd = 20; return; }
-    if (this.mycel.length + pending >= MAX_MYCEL) { m.sporeCd = 40; return; }
+    if (this.mycel.length + pending >= Math.min(MAX_MYCEL, this.popCap())) { m.sporeCd = 40; return; }
     if (this.day > 1 && this.resources.food < 3) { m.sporeCd = 15; return; }
     if (this.day > 1) this.resources.food -= 3;
     m.task = { type: 'spore', t: 0 };
-    m.sporeCd = this.day === 1 ? rand(18, 26) : rand(35, 60);
+    m.sporeCd = this.day === 1 ? rand(28, 40) : rand(55, 90);
   }
 
   // -------------------------------------------------------------------------
@@ -313,13 +380,16 @@ export class Colony {
     if (this.hutSite) add(P.build * 2.2, { type: 'build', what: 'hut', site: this.hutSite });
     // crafting
     const axes = this.countTool('axe'), spears = this.countTool('spear');
-    if (w.storage.built && !m.tool && R.wood >= 2 && R.stone >= 1) {
-      if (axes < Math.ceil(pop / 5)) add(P.craft * 1.5, { type: 'craft', kind: 'axe' });
-      const wantSpears = this.day >= 2 || this.stats.threats > 0 || this.discoveries.has('beetles');
-      if (wantSpears && spears < Math.ceil(pop / 3)) add((P.craft + P.defend) * 1.3, { type: 'craft', kind: 'spear' });
+    const G = this.progress;
+    if (!m.tool && R.wood >= 2 && R.stone >= 1) {
+      if (G.has('tools') && axes < Math.ceil(pop / 5)) add(P.craft * 1.5, { type: 'craft', kind: 'axe' });
+      if (G.has('weapons') && spears < Math.ceil(pop / 3)) add((P.craft + P.defend) * 1.3, { type: 'craft', kind: 'spear' });
     }
+    // farming and symbols, once learned
+    if (G.has('farming') && w.farmCount < FARM_SPOTS.length && R.food >= 4) add(0.35, { type: 'plant' });
+    if (G.has('symbols') && w.symbolsCarved < 6 && !this.isNight()) add(0.12, { type: 'carve' });
     // fire
-    if (w.fire.discovered && !w.fire.lit && R.wood >= 3) add(this.phase > 0.45 ? 6 : 2.5, { type: 'lightFire' });
+    if (w.fire.discovered && !w.fire.lit && R.wood >= 3 && G.allowed('fire', this.day)) add(this.phase > 0.45 ? 6 : 2.5, { type: 'lightFire' });
     if (w.fire.lit && w.fire.fuel < 0.45 && R.wood >= 1) add(1.6, { type: 'feedFire' });
     // repair a wrecked hut
     const broken = w.huts.find((h) => h.built && h.damaged);
@@ -393,7 +463,7 @@ export class Colony {
               t.picked = true;
               m.carrying = { kind: t.kind, amount: t.kind === 'log' ? 2 : 1 };
               if (Math.random() < 0.2) this.setEmotion(m, 'happy', 1.5);
-              if (!this.discoveries.has('stream') && Math.hypot(tg.x, tg.z + 15) < 8) this.discover('stream', m);
+              if (!this.discoveries.has('stream') && isNearStream(tg.x, tg.z, 4)) this.discover('stream', m);
             }
           }
           return false;
@@ -453,6 +523,7 @@ export class Colony {
               }
               R.food--; m.hunger = Math.max(0, m.hunger - 0.65); m.starve = 0;
               this.stats.ate++;
+              this.ateTogether(m);
               w.drawStorage(R);
               this.setEmotion(m, rival ? 'angry' : 'happy', 2);
               return true;
@@ -468,7 +539,7 @@ export class Colony {
         }
         if (this.moveTo(m, bush.x, bush.z, dt, 1.9)) {
           t.work = (t.work ?? 0) + dt;
-          if (t.work > 1) { if (w.pickBerry(bush)) { m.hunger = Math.max(0, m.hunger - 0.5); m.starve = 0; this.setEmotion(m, 'happy', 2); } return true; }
+          if (t.work > 1) { if (w.pickBerry(bush)) { m.hunger = Math.max(0, m.hunger - 0.5); m.starve = 0; this.setEmotion(m, 'happy', 2); this.ateTogether(m); } return true; }
         }
         return false;
       }
@@ -533,6 +604,9 @@ export class Colony {
             w.drawHut(site);
             if (site.progress >= 1) {
               site.built = true; this.hutSite = null; site.faction = m.faction;
+              if (this.learnTech('shelter', `${m.name} and friends finished the first hut. A roof against the dark.`, m)) {
+                this.progress.earn('emotion', 'pride', `${m.name} looks at the hut. We made this.`, m, this.day);
+              }
               w.drawHut(site);
               this.stats.built.push('hut');
               this.event('build', `${m.name} and friends finished a hut.`, site, 7);
@@ -554,8 +628,8 @@ export class Colony {
           if (t.work > 2.5) {
             R.wood -= 2; R.stone -= 1; m.tool = t.kind;
             this.stats.crafted.push(t.kind);
-            if (t.kind === 'axe') this.discover('tools', m); else this.discover('spears', m);
-            this.event('craft', `${m.name} made ${t.kind === 'axe' ? 'a stone axe' : 'a spear'}.`, m, 5);
+            this.discoveries.add(t.kind === 'axe' ? 'tools' : 'spears');
+            this.learnTech(t.kind === 'axe' ? 'tools' : 'weapons', t.kind === 'axe' ? `${m.name} tied a sharp stone to a stick. An axe!` : `${m.name} sharpened a long stick into a spear.`, m, 'craft', 5);
             this.hooks.onSound?.('knock', m);
             this.setEmotion(m, 'happy', 3);
             w.drawStorage(R);
@@ -574,7 +648,7 @@ export class Colony {
           if (t.work > 3) {
             R.wood -= 3; w.fire.lit = true; w.fire.fuel = 1;
             this.discover('fireLit', null);
-            this.event('fire', `${m.name} lit the fire! Warm light everywhere.`, FIRE_POS, 9);
+            this.learnTech('fire', `${m.name} rubbed two sticks until they smoked. Warm light everywhere!`, m, 'fire', 7);
             this.mycel.forEach((o) => { if (dist(o, FIRE_POS) < 12) this.setEmotion(o, 'happy', 3); });
             w.drawStorage(R);
             return true;
@@ -594,6 +668,7 @@ export class Colony {
       }
       case 'explore': {
         m.icon = 'explore';
+        if (!this.discoveries.has('stream') && isNearStream(m.x, m.z, 3.5)) this.discover('stream', m);
         if (!w.fire.discovered && dist(m, FIRE_POS) < 3) {
           w.fire.discovered = true;
           this.setEmotion(m, 'curious', 3.5);
@@ -671,15 +746,56 @@ export class Colony {
         if (this.moveTo(m, p.x, p.z, dt, 1.5)) {
           if (t.t > 4) {
             m.love = null;
-            if (this.mycel.length + this.sprouts.length < MAX_MYCEL && this.stats.born.length + this.sprouts.length < this.maxBirthsToday() + 1) {
+            if (this.mycel.length + this.sprouts.length < Math.min(MAX_MYCEL, this.popCap()) && this.stats.born.length + this.sprouts.length < this.maxBirthsToday()) {
               this.event('love', `${m.name} and ${p.name} fell in love. Spores everywhere.`, m, 8);
               m.task = { type: 'spore', t: 0, love: true };
               return false;
             }
+            this.event('love', `${m.name} and ${p.name} sit close together. Their screens glow pink.`, m, 7);
             return true;
           }
         }
         return t.t > 12;
+      }
+      case 'plant': {
+        m.icon = 'berry';
+        const spot = FARM_SPOTS[w.farmCount];
+        if (!spot) return true;
+        if (!t.got) {
+          if (R.food < 1) return true;
+          if (deliver()) { R.food--; t.got = true; w.drawStorage(R); }
+          return false;
+        }
+        if (this.moveTo(m, spot.x + 1.3, spot.z, dt, 0.5)) {
+          m.targetYaw = Math.atan2(spot.x - m.x, spot.z - m.z);
+          t.work = (t.work ?? 0) + dt;
+          m.squash = Math.abs(Math.sin(t.work * 8)) * 0.12;
+          if (t.work > 3.2) {
+            if (w.plantBush(spot)) {
+              w.puff(spot.x, spot.z, 0x7dff9a, 30, 0.5);
+              this.learnTech('farming', `${m.name} pushed a berry into the soil. Days later, a bush!`, m, 'build', 5);
+            }
+            return true;
+          }
+        }
+        return false;
+      }
+      case 'carve': {
+        m.icon = 'hammer';
+        if (w.symbolsCarved >= 6) return true;
+        const a = Math.atan2(FIRE_POS.x - SYMBOL_POS.x, FIRE_POS.z - SYMBOL_POS.z);
+        if (this.moveTo(m, SYMBOL_POS.x + Math.sin(a) * 1.3, SYMBOL_POS.z + Math.cos(a) * 1.3, dt, 0.4)) {
+          m.targetYaw = Math.atan2(SYMBOL_POS.x - m.x, SYMBOL_POS.z - m.z);
+          t.work = (t.work ?? 0) + dt;
+          m.squash = Math.max(0, Math.sin(t.work * 11)) * 0.1;
+          if (t.work > 4) {
+            const n = w.carveSymbol();
+            this.hooks.onSound?.('knock', m);
+            this.learnTech('symbols', `${m.name} scratched a glowing mark into the stone. It means: us.`, m, n % 2 ? 'build' : null, 5);
+            return true;
+          }
+        }
+        return false;
       }
       case 'pose': { // stand still facing a direction (screenshots / inspect)
         m.icon = null; m.moving = 0;
@@ -776,6 +892,93 @@ export class Colony {
     }
   }
 
+  /** First meal: FOOD. First meal with someone close by: JOY. */
+  ateTogether(m) {
+    this.learnTech('food', `${m.name} bit into a berry. Sweet! Food means life.`, m);
+    if (this.progress.has('food') && !this.progress.feels('happy')) {
+      const mate = this.mycel.find((o) => o !== m && !o.exiled && dist(o, m) < 6);
+      if (mate) this.progress.earn('emotion', 'happy', `${m.name} and ${mate.name} shared a meal. A warm glow on their screens.`, m, this.day);
+    }
+  }
+
+  /** The director's push: make the next tech happen today (a small, visible scene). */
+  nudge(id) {
+    const R = this.resources, w = this.world;
+    const busy = ['scuffle', 'spore', 'love', 'flee', 'defend', 'sleep', 'exiled', 'steal', 'sabotage'];
+    const free = this.mycel.filter((m) => m.grown >= 1 && !m.exiled && !busy.includes(m.task?.type));
+    const m = free.find((o) => (id === 'tools' || id === 'weapons') && !o.tool) ?? pick(free);
+    if (!m) return;
+    const assign = (task, who = m) => { if (who.task?.target?.reservedBy === who.id) who.task.target.reservedBy = null; if (who.carrying) this.addCarry(who); who.task = task; };
+    const need = (k, n) => { if (R[k] < n) { R[k] = n; w.drawStorage(R); } };
+    switch (id) {
+      case 'food': need('food', 1); m.hunger = Math.max(m.hunger, 0.62); assign({ type: 'eat' }); break;
+      case 'water': assign({ type: 'explore', target: { x: 4 + rand(-1, 1), z: -10.5 + rand(-1, 1) } }); break;
+      case 'fire':
+        if (!w.fire.discovered) assign({ type: 'explore', target: { x: FIRE_POS.x + 1, z: FIRE_POS.z + 1 } });
+        else { need('wood', 3); assign({ type: 'lightFire' }); }
+        break;
+      case 'tools': need('wood', 2); need('stone', 1); assign({ type: 'craft', kind: 'axe' }); break;
+      case 'weapons': need('wood', 2); need('stone', 1); assign({ type: 'craft', kind: 'spear' }); break;
+      case 'shelter':
+        if (!this.hutSite) { need('wood', 6); need('stone', 2); this.planHut(true); }
+        if (this.hutSite) for (const o of free.slice(0, 3)) assign({ type: 'build', what: 'hut', site: this.hutSite }, o);
+        break;
+      case 'farming': need('food', 1); assign({ type: 'plant' }); break;
+      case 'symbols': assign({ type: 'carve' }); break;
+      case 'watcher': this.watcherScene(); break;
+      default:
+    }
+  }
+
+  /** Midday struggle when the day had no drama yet. */
+  crisis() {
+    const adults = this.mycel.filter((m) => m.grown >= 1 && !m.exiled && m.task?.type !== 'sleep');
+    const opts = ['hunger'];
+    if (adults.length >= 2 && this.day >= 2) opts.push('quarrel', 'quarrel');
+    if (this.day >= 2) opts.push('storm');
+    if (this.day >= 3 && this.progress.has('fire')) opts.push('beetles');
+    const kind = !this.progress.feels('angry') && opts.includes('quarrel') ? 'quarrel' : pick(opts);
+    if (kind === 'quarrel') {
+      const a = pick(adults), b = this.nearest(adults, a, (o) => o !== a);
+      if (a && b) { this.scuffle(a, b, 'food'); return; }
+    }
+    if (kind === 'beetles') { this.spawnBeetles(1); return; }
+    if (kind === 'storm') {
+      this.hooks.onCrisis?.('storm');
+      this.mycel.forEach((m) => this.setEmotion(m, 'scared', 3));
+      this.event('crisis', 'Dark clouds roll in. A storm hits the clearing.', this.centroid(), 9);
+      return;
+    }
+    // hunger: the wild bushes go bare for a while
+    let near = null;
+    for (const b of this.world.bushes) { if (b.farm) continue; b.berries = 0; b.regrow = -35; this.world.drawBush(b); near = near ?? b; }
+    this.mycel.forEach((m) => { m.hunger = Math.min(1, m.hunger + 0.25); });
+    this.event('crisis', 'The berry bushes are bare. Bellies are rumbling.', near ?? this.centroid(), 9);
+  }
+
+  /** Last tech: they all stop, look up, and know someone is watching. */
+  watcherScene() {
+    const c = this.centroid();
+    this.mycel.forEach((m) => { if (!m.exiled) { m.listen = 7; m.moving = 0; this.setEmotion(m, 'curious', 6); } });
+    this.later(5, () => this.learnTech('watcher', 'All Mycel looked up at once. They know someone is watching.', c, 'watcher', 9));
+  }
+
+  planHut(force = false) {
+    const w = this.world;
+    if (this.hutSite || !w.storage.built && !force) return;
+    if (!force && (this.resources.wood < 6 || this.resources.stone < 2)) return;
+    const want = Math.max(1, Math.ceil(this.mycel.length / 4));
+    if (!force && w.huts.length >= want) return;
+    if (w.huts.length >= HUT_SLOTS.length) return;
+    const used = new Set(w.huts.map((h) => h.slot));
+    const slot = HUT_SLOTS.findIndex((_, i) => !used.has(i));
+    if (slot < 0) return;
+    this.resources.wood -= 6; this.resources.stone -= 2;
+    this.hutSite = w.addHut(slot, 0.02);
+    w.drawStorage(this.resources);
+    this.event('plan', 'The colony marked a spot for a new hut.', this.hutSite, 4);
+  }
+
   // -------------------------------------------------------------------------
   // Scuffles (cartoon fights: shoving, pokes, dust — no gore)
   // -------------------------------------------------------------------------
@@ -818,24 +1021,13 @@ export class Colony {
     this.simT = (this.simT ?? 0) + dt;
     for (let i = this.timers.length - 1; i >= 0; i--) { const tm = this.timers[i]; tm.t -= dt; if (tm.t <= 0) { this.timers.splice(i, 1); tm.fn(); } }
     this.social.update(dt);
+    this.director.update(dt);
+    this.awareness = this.progress.iq / 100;
     this.chirpBudget = Math.min(3, this.chirpBudget + dt * 1.2);
     const night = this.isNight();
 
-    // colony-level planning: hut sites
-    if (!this.hutSite && w.storage.built && this.resources.wood >= 6 && this.resources.stone >= 2) {
-      const want = Math.ceil(this.mycel.length / 4);
-      const built = w.huts.length;
-      if (built < want && built < HUT_SLOTS.length) {
-        const used = new Set(w.huts.map((h) => h.slot));
-        const slot = HUT_SLOTS.findIndex((_, i) => !used.has(i));
-        if (slot >= 0) {
-          this.resources.wood -= 6; this.resources.stone -= 2;
-          this.hutSite = w.addHut(slot, 0.02);
-          w.drawStorage(this.resources);
-          this.event('plan', 'The colony marked a spot for a new hut.', this.hutSite, 4);
-        }
-      }
-    }
+    // colony-level planning: hut sites (once shelter may be learned)
+    if (this.progress.allowed('shelter', this.day) && (this.progress.has('shelter') || this.progress.isPending('tech', 'shelter') || w.huts.length === 0)) this.planHut();
     if (!this.hutSite) this.hutSite = w.huts.find((h) => !h.built) ?? null;
 
     // fire burns down
@@ -928,13 +1120,18 @@ export class Colony {
     }
 
     // Day 1: make sure the colony visibly multiplies (5-8 by the end of the first day)
-    if (this.day === 1 && this.phase > 0.45 && this.phase < NIGHT_START && this.mycel.length + this.sprouts.length < 5) {
+    if (this.day === 1 && this.phase > 0.2 && this.phase < NIGHT_START && this.mycel.length + this.sprouts.length < (this.phase > 0.5 ? 3 : 2) && this.stats.born.length + this.sprouts.length < 2) {
       const adult = this.mycel.find((m) => m.grown >= 1 && m.task?.type !== 'spore');
-      if (adult && Math.random() < dt * 0.4) { adult.task = { type: 'spore', t: 0 }; }
+      if (adult && Math.random() < dt * 0.15) { adult.task = { type: 'spore', t: 0 }; adult.sporeCd = rand(28, 40); }
     }
 
     // night threats from day 3
-    if (this.day >= 3 && !this.beetlesTonight && this.phase > NIGHT_START + 0.02) {
+    if (!this.nightSeen && this.phase > NIGHT_START) {
+      this.nightSeen = true;
+      const m = this.mycel.find((o) => !o.exiled) ?? null;
+      this.progress.earn('emotion', 'scared', `The first darkness fell. ${m?.name ?? 'A Mycel'}'s screen flickers: fear.`, m, this.day);
+    }
+    if (this.day >= 3 && this.progress.has('fire') && !this.beetlesTonight && this.phase > NIGHT_START + 0.02) {
       this.beetlesTonight = true;
       this.discoveries.add('beetles');
       this.spawnBeetles(Math.min(4, 1 + Math.floor((this.day - 3) / 2)));
@@ -1002,6 +1199,12 @@ export class Colony {
     this.day = day;
     this.phase = 0.0;
     this.beetlesTonight = false;
+    this.nightSeen = this.progress.feels('scared');
+    this.director.newDay();
+    this.progress.addIQ(1);
+    // births today: usually 1–2, sometimes 3 when food is plenty and the mood is good
+    const pop = this.mycel.length || 1;
+    this.birthQuota = 1 + (this.resources.food >= pop * 1.5 && Math.random() < 0.7 ? 1 : 0) + (this.groupMood().valence > 0.3 && Math.random() < 0.3 ? 1 : 0);
     this.stats = this.freshStats();
     this.events = [];
     if (plan) this.plan = plan;
@@ -1027,6 +1230,7 @@ export class Colony {
       events: this.events.map((e) => e.text).slice(-14),
       drama: this.events.filter((e) => e.drama).map((e) => e.text).slice(-8),
       social: this.social.summary(),
+      progress: this.progress.summary(this.day),
     };
   }
 
@@ -1042,13 +1246,16 @@ export class Colony {
       fire: { discovered: this.world.fire.discovered, lit: this.world.fire.lit, fuel: this.world.fire.fuel },
       discoveries: [...this.discoveries],
       awareness: this.awareness,
+      progress: this.progress.serialize(),
+      farms: this.world.farmCount,
+      symbols: this.world.symbolsCarved,
     };
   }
 
   /** The most interesting place right now (for the auto camera). */
   focus() {
-    const now = performance.now();
-    if (this.interest && now - this.interest.t < 7000) return this.interest;
+    const f = this.director.focus();
+    if (f) return f;
     if (this.beetles.length) return this.beetles[0];
     const c = this.centroid();
     return { x: c.x, z: c.z, score: 1 };

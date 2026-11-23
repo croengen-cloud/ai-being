@@ -310,7 +310,8 @@ class AudioEngine {
   chirp(emotion = 'neutral', gainMul = 1) {
     if (!this.running) return;
     this._gm = Math.max(0.1, Math.min(1, gainMul));
-    try { this._chirp(emotion); } finally { this._gm = 1; }
+    const alias = { trust: 'love', pride: 'excited', jealous: 'angry', sleep: 'neutral' };
+    try { this._chirp(alias[emotion] ?? emotion); } finally { this._gm = 1; }
   }
 
   _chirp(emotion) {
@@ -578,6 +579,15 @@ class AudioEngine {
     else if (name === 'coup') { [262, 330, 392, 523].forEach((f, i) => this._tone(t + i * 0.1, 0.3, f, f, { type: 'triangle', gain: 0.1, fm: 0.1, bus: this.eventBus })); }
     else if (name === 'exile') { [392, 349, 311, 262].forEach((f, i) => this._tone(t + i * 0.18, 0.35, f, f * 0.98, { type: 'sine', gain: 0.1, vib: 5, fm: 0, bus: this.eventBus })); }
     else if (name === 'betrayal') { this._tone(t, 0.6, 220, 110, { type: 'sawtooth', gain: 0.06, fm: 0.2, bus: this.eventBus }); }
+  }
+
+  /** Milestone: bright rising arpeggio + glittering sparkle (+ a low swell). */
+  milestone(gainMul = 1) {
+    if (!this.running) return;
+    const t = this.ctx.currentTime + 0.02;
+    [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => this._tone(t + i * 0.085, 0.42, f, f, { type: 'triangle', gain: 0.11 * gainMul, fm: 0.15, bus: this.eventBus }));
+    for (let i = 0; i < 8; i++) { const f = 2000 + Math.random() * 2600; this._tone(t + 0.42 + i * 0.05, 0.12, f, f * 1.05, { type: 'sine', gain: 0.035 * gainMul, fm: 0, bus: this.eventBus }); }
+    this._tone(t, 1.2, 130.8, 196, { type: 'sawtooth', gain: 0.06 * gainMul, fm: 0.2, attack: 0.25, bus: this.eventBus });
   }
 
   /** Fire crackle loop; level 0..1 (fire intensity × nearness to the camera). */

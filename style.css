@@ -47,7 +47,7 @@ body { position: fixed; inset: 0; }
 #day-counter { font-size: 7.5cqmin; }
 #day-counter.pop { animation: pop 0.6s cubic-bezier(.2, 1.6, .4, 1); }
 @keyframes pop { 0% { transform: scale(0.6); } 100% { transform: scale(1); } }
-#colony-counter { font-size: 3.4cqmin; margin-top: 1.4cqmin; color: #c8fff0; }
+#colony-counter { font-size: 2.8cqmin; margin-top: 1.2cqmin; color: #c8fff0; }
 #colony-counter.bump { animation: bump 0.5s ease-out; }
 @keyframes bump { 0% { transform: scale(1.35); color: #fff; } 100% { transform: scale(1); } }
 #status {
@@ -331,3 +331,71 @@ button.danger { color: #c2264a; }
 
 .vertical #inspect { bottom: calc(50cqmin + var(--safe-bottom)); width: min(80%, 360px); font-size: 3.2cqmin; }
 .inspecting #feed { display: none; }
+
+/* ---------- AI BRAIN / IQ bar / emotions ---------- */
+#brain-row, #emo-counter {
+  font-family: 'Press Start 2P', monospace; color: #fff; letter-spacing: 0.04em;
+  text-shadow: 0 0.35cqmin 0 rgba(12, 40, 22, 0.75), 0 0 1.4cqmin rgba(12, 40, 22, 0.45);
+}
+#brain-row { display: flex; align-items: center; gap: 1.6cqmin; margin-top: 1.6cqmin; font-size: 2.9cqmin; }
+#iq-bar {
+  position: relative; width: 30cqmin; height: 3.2cqmin; border-radius: 1cqmin; overflow: hidden;
+  background: rgba(10, 30, 24, 0.55); box-shadow: inset 0 0 0 0.45cqmin rgba(255, 255, 255, 0.85), 0 0.4cqmin 0 rgba(12, 40, 22, 0.6);
+}
+#iq-fill {
+  position: absolute; inset: 0.45cqmin auto 0.45cqmin 0.45cqmin; width: 0; border-radius: 0.6cqmin;
+  background: linear-gradient(90deg, #3fd9b0, #8dffe0 60%, #e8fff8); transition: width 1.2s cubic-bezier(.2, .9, .3, 1);
+}
+#iq-bar.jump { animation: iqjump 1.4s ease-out; }
+@keyframes iqjump { 0% { box-shadow: inset 0 0 0 0.45cqmin #fff, 0 0 0 0 rgba(141, 255, 224, 0.9); transform: scale(1.12); } 100% { box-shadow: inset 0 0 0 0.45cqmin rgba(255,255,255,.85), 0 0 3cqmin 1cqmin rgba(141, 255, 224, 0); transform: scale(1); } }
+#iq-num { color: #8dffe0; min-width: 7ch; }
+#iq-num.jump { animation: bump 0.9s ease-out; }
+#emo-counter { font-size: 2.6cqmin; margin-top: 1.4cqmin; color: #ffd6ec; }
+#emo-counter.bump { animation: bump 0.7s ease-out; }
+
+/* ---------- The one caption ---------- */
+#feed, #drama { display: none !important; }
+#caption {
+  position: absolute; z-index: 5; left: 50%; translate: -50% 0; bottom: calc(24cqmin + var(--safe-bottom));
+  width: min(88%, 600px); text-align: center; pointer-events: none;
+  font-size: 3.6cqmin; font-weight: 900; line-height: 1.2; color: #12281c;
+  padding: 0.55em 0.95em; border-radius: 1em; background: var(--paper-solid, #fffdf4);
+  box-shadow: 0 0.6cqmin 2cqmin rgba(0, 0, 0, 0.25);
+  opacity: 0; transform: translateY(1.5cqmin); transition: opacity 0.35s, transform 0.35s;
+}
+#caption.visible { opacity: 1; transform: none; }
+#caption.story { background: #2b1022; color: #fff; box-shadow: 0 0 2.5cqmin rgba(255, 70, 110, 0.45); }
+.vertical #caption { bottom: calc(34cqmin + var(--safe-bottom)); font-size: 4.4cqmin; }
+.clean #caption { bottom: calc(9cqh + var(--safe-bottom)); }
+
+/* ---------- Milestone banner ---------- */
+#milestone {
+  position: absolute; z-index: 8; left: 50%; top: 50%; translate: -50% -50%; width: min(92%, 640px);
+  text-align: center; pointer-events: none; padding: 4cqmin 4cqmin 3.5cqmin; border-radius: 3cqmin;
+  background: radial-gradient(ellipse at 50% 35%, rgba(40, 20, 70, 0.92), rgba(12, 8, 30, 0.9));
+  box-shadow: 0 0 0 0.6cqmin rgba(141, 255, 224, 0.85), 0 0 6cqmin rgba(141, 255, 224, 0.45);
+  opacity: 0; transform: scale(0.6); transition: opacity 0.35s, transform 0.35s;
+}
+#milestone.visible { opacity: 1; transform: scale(1); animation: mspop 0.7s cubic-bezier(.2, 1.7, .4, 1); }
+@keyframes mspop { 0% { transform: scale(0.4) rotate(-4deg); } 100% { transform: scale(1) rotate(0); } }
+.ms-emoji { font-size: 16cqmin; line-height: 1.1; filter: drop-shadow(0 0 2cqmin rgba(255, 255, 255, 0.5)); }
+#milestone.visible .ms-emoji { animation: msemoji 1.6s ease-in-out infinite alternate; }
+@keyframes msemoji { from { transform: translateY(0) scale(1); } to { transform: translateY(-1cqmin) scale(1.06); } }
+.ms-title { font-family: 'Press Start 2P', monospace; font-size: 3.4cqmin; color: #8dffe0; margin-top: 1.5cqmin; letter-spacing: 0.08em; }
+.ms-word {
+  font-family: 'Press Start 2P', monospace; font-size: 7.4cqmin; color: #fff; line-height: 1.2; margin-top: 1.2cqmin;
+  text-shadow: -0.5cqmin 0 #3fd9b0, 0.5cqmin 0 #ff5fb4;
+}
+.ms-text { font-size: 3.6cqmin; font-weight: 800; color: #e8dcff; margin-top: 2.2cqmin; line-height: 1.3; }
+.ms-iq { font-family: 'Press Start 2P', monospace; font-size: 2.8cqmin; color: #ffd84a; margin-top: 2cqmin; }
+.vertical .ms-word { font-size: 8.6cqmin; }
+.vertical .ms-text { font-size: 4.4cqmin; }
+
+/* ---------- End of day card ---------- */
+#daycard.endcard .card { background: rgba(10, 8, 26, 0.94); color: #fff; text-align: center; box-shadow: 0 0 0 0.6cqmin rgba(141, 255, 224, 0.7), 0 0 6cqmin rgba(141, 255, 224, 0.35); }
+#daycard.endcard .card-title { color: #fff; text-shadow: -0.4cqmin 0 #3fd9b0, 0.4cqmin 0 #ff5fb4; }
+#daycard.endcard .card-sub { color: #8dffe0; font-family: 'Press Start 2P', monospace; font-size: 3cqmin; }
+#daycard.endcard #daycard-text { font-style: italic; color: #ffd6ec; }
+
+/* Record mode: only the HUD and the one caption (+ milestone banner / end card). */
+.clean #thought:not(.watcher) { display: none; }

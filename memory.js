@@ -7,7 +7,7 @@ const MAX_LEARNINGS = 500;
 
 export function defaultState() {
   return {
-    version: 4,
+    version: 5,
     day: 1,
     colony: null, // snapshot from Colony.serialize(); null = fresh start with one Mycel
     diaryEntries: [], // { day, text, events: [..], population, at }
@@ -39,6 +39,19 @@ function normalizeColony(c) {
     discoveries: Array.isArray(c.discoveries) ? c.discoveries.map((d) => str(d, 20)).slice(0, 30) : [],
     awareness: Math.min(1, Math.max(0, num(c.awareness))),
     social: normalizeSocial(c.social),
+    progress: normalizeProgress(c.progress),
+    farms: Math.min(4, int(c.farms)),
+    symbols: Math.min(6, int(c.symbols)),
+  };
+}
+
+function normalizeProgress(p) {
+  if (!isObj(p)) return {};
+  const list = (a, max = 20) => (Array.isArray(a) ? a.map((x) => str(x, 20)).filter(Boolean).slice(0, max) : []);
+  return {
+    techs: list(p.techs), emotions: list(p.emotions), firsts: list(p.firsts),
+    iq: Math.min(100, Math.max(0, num(p.iq, 2))),
+    log: Array.isArray(p.log) ? p.log.filter(isObj).slice(-120).map((l) => ({ day: int(l.day), text: str(l.text, 60) })) : [],
   };
 }
 
@@ -66,7 +79,7 @@ function normalizeSocial(so) {
 export function normalize(raw) {
   const s = defaultState();
   if (!isObj(raw)) return s;
-  const fromCity = (raw.version ?? 1) < 3; // the old night-city game: keep diary + learnings, restart the colony
+  const fromCity = (raw.version ?? 1) < 5; // older games (city, fast colony): keep diary + learnings, restart the colony at day 1
   s.day = fromCity ? 1 : Math.max(1, int(raw.day, 1));
   s.colony = fromCity ? null : normalizeColony(raw.colony);
   if (Array.isArray(raw.diaryEntries)) {
@@ -110,7 +123,7 @@ export function clearState() {
 
 /** Export file contents. Contains only the memory, never settings or the API key. */
 export function exportState(state) {
-  return JSON.stringify({ app: 'ai-being', format: 4, exportedAt: new Date().toISOString(), state }, null, 2);
+  return JSON.stringify({ app: 'ai-being', format: 5, exportedAt: new Date().toISOString(), state }, null, 2);
 }
 
 /** Parse an export file. Throws with a readable message if it is not one of ours. */

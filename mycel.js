@@ -73,7 +73,20 @@ export function createMycelRenderer(scene) {
   // ---- Instanced meshes ----
   const body = mk(bodyGeo, shellMat, N);
   const faces = {};
-  for (const e of [...EMOTIONS, 'blink']) faces[e] = mk(faceGeo, new THREE.MeshBasicMaterial({ map: faceTexture(e), toneMapped: false }), N, false);
+  // Face screens start dull and monochrome; they gain brightness and colour with every learned emotion.
+  const faceUniforms = { sat: { value: 0 } };
+  const faceMat = (e) => {
+    const mat = new THREE.MeshBasicMaterial({ map: faceTexture(e), toneMapped: false });
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uSat = faceUniforms.sat;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uSat;')
+        .replace('#include <map_fragment>', '#include <map_fragment>\nfloat lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));\ndiffuseColor.rgb = mix(vec3(lum) * vec3(0.72, 0.95, 0.85), diffuseColor.rgb, uSat) * (0.55 + 0.45 * uSat);');
+    };
+    return mat;
+  };
+  for (const e of [...EMOTIONS, 'blink']) faces[e] = mk(faceGeo, faceMat(e), N, false);
+  let expressive = 0;
   const stem = mk(stemGeo, stemMat, N, false);
   const cap = mk(capGeo, capMat, N);
   const rim = mk(rimGeo, capMat, N, false);
@@ -111,6 +124,8 @@ export function createMycelRenderer(scene) {
 
   let glowLevel = 0.6;
   return {
+    /** 0..1 learned emotions → screen colour, brightness and blinking. */
+    setExpressiveness(k) { expressive = k; faceUniforms.sat.value = 0.15 + 0.85 * k; },
     setNightGlow(v) { glowLevel = v; capUniforms.glow.value = v; glowMat.opacity = Math.min(0.38, Math.max(0.1, (v - 0.5) * 0.35)); },
 
     /** list: array of Mycel sim objects (see colony.js) */
@@ -147,7 +162,7 @@ export function createMycelRenderer(scene) {
         body.setMatrixAt(i, B);
         tmpC.setHex(0xf2eefa).lerp(new THREE.Color(m.color), 0.08);
         body.setColorAt(i, tmpC);
-        const face = m.blink ? 'blink' : (faces[m.emotion] ? m.emotion : 'neutral');
+        const face = m.blink && expressive >= 0.33 ? 'blink' : (faces[m.emotion] ? m.emotion : 'neutral');
         faces[face].setMatrixAt(counts[face]++, B);
 
         const capS = m.capScale ?? 1;
