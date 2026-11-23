@@ -222,3 +222,58 @@ button.danger { border-color: #ff7a7a; color: #ffb0b0; }
 .sound-test { margin-top: 0.8rem; border: 1px dashed var(--edge); padding: 0.3rem 0.6rem 0.6rem; }
 .sound-test summary { cursor: pointer; color: var(--cyan); min-height: 44px; display: flex; align-items: center; }
 #btn-mute.on { border-color: #ff7a7a; color: #ffb0b0; }
+
+/* ---------- Colony counter ---------- */
+#colony-counter {
+  font-family: 'Press Start 2P', 'VT323', monospace;
+  font-size: 3.2cqmin; margin-top: 1.6cqmin; color: var(--mint);
+  text-shadow: 0.3cqmin 0.3cqmin 0 #12302a, 0 0 1.5cqmin rgba(141, 255, 224, 0.45);
+}
+.vertical #colony-counter { font-size: 5cqmin; }
+
+/* ---------- Title screen ---------- */
+#title-screen {
+  position: absolute; inset: 0; z-index: 20; display: grid; place-content: center; text-align: center;
+  background: radial-gradient(ellipse at 50% 45%, rgba(20, 12, 40, 0.55), rgba(6, 4, 16, 0.92) 75%);
+  cursor: pointer; transition: opacity 0.9s;
+  padding: var(--safe-top) 4cqmin var(--safe-bottom);
+}
+#title-screen.gone { opacity: 0; pointer-events: none; }
+.title-glitch {
+  position: relative; margin: 0; font-family: 'Press Start 2P', monospace; font-weight: normal;
+  font-size: 9cqmin; line-height: 1.2; color: #fff; letter-spacing: 0.06em;
+  text-shadow: 0 0 2.5cqmin rgba(180, 140, 255, 0.55), 0.6cqmin 0.6cqmin 0 #2a1650;
+  animation: title-jitter 7s steps(1) infinite;
+}
+.vertical .title-glitch { font-size: 12cqmin; }
+.title-glitch::before, .title-glitch::after {
+  content: attr(data-text); position: absolute; inset: 0; pointer-events: none;
+  clip-path: inset(0 0 100% 0);
+}
+.title-glitch::before { color: var(--mint); text-shadow: -0.5cqmin 0 rgba(141, 255, 224, 0.8); animation: glitch-a 7s steps(1) infinite; }
+.title-glitch::after { color: var(--pink); text-shadow: 0.5cqmin 0 rgba(255, 111, 174, 0.8); animation: glitch-b 7s steps(1) infinite; }
+/* Mostly calm; a short burst of tearing every few seconds */
+@keyframes glitch-a {
+  0%, 62%, 70%, 100% { clip-path: inset(0 0 100% 0); transform: none; }
+  63% { clip-path: inset(10% 0 62% 0); transform: translate(-1.2cqmin, 0); }
+  65% { clip-path: inset(55% 0 20% 0); transform: translate(1cqmin, 0); }
+  67% { clip-path: inset(30% 0 45% 0); transform: translate(-0.6cqmin, 0); }
+  69% { clip-path: inset(75% 0 5% 0); transform: translate(0.8cqmin, 0); }
+}
+@keyframes glitch-b {
+  0%, 62%, 70%, 100% { clip-path: inset(0 0 100% 0); transform: none; }
+  64% { clip-path: inset(40% 0 35% 0); transform: translate(1.2cqmin, 0); }
+  66% { clip-path: inset(5% 0 80% 0); transform: translate(-1cqmin, 0); }
+  68% { clip-path: inset(60% 0 10% 0); transform: translate(0.6cqmin, 0); }
+}
+@keyframes title-jitter {
+  0%, 62%, 70%, 100% { transform: none; opacity: 1; }
+  63% { transform: translate(0.3cqmin, 0) skewX(-4deg); }
+  65% { opacity: 0.75; }
+  67% { transform: translate(-0.3cqmin, 0) skewX(3deg); }
+}
+.title-tap { margin-top: 5cqmin; font-size: 4.2cqmin; color: var(--orange); animation: blink 1.6s steps(2) infinite; }
+.vertical .title-tap { font-size: 6cqmin; }
+@media (prefers-reduced-motion: reduce) {
+  .title-glitch, .title-glitch::before, .title-glitch::after { animation: none; }
+}

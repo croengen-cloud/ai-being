@@ -1,4 +1,4 @@
-// memory.js — the being's save state (localStorage), growth stages, export / import.
+// memory.js — the Mycel's save state (localStorage), growth stages, export / import.
 
 const SAVE_KEY = 'aiBeing.save.v1'; // storage key kept from v1; the data itself is versioned
 const MAX_LEARNINGS = 500;
@@ -123,7 +123,7 @@ export function importState(text) {
   if (typeof text !== 'string' || text.length > 5_000_000) throw new Error('File is too large or empty.');
   let obj;
   try { obj = JSON.parse(text); } catch { throw new Error('This is not a valid JSON file.'); }
-  if (!isObj(obj) || obj.app !== 'ai-being' || !isObj(obj.state)) throw new Error('This is not an AI Being memory file.');
+  if (!isObj(obj) || obj.app !== 'ai-being' || !isObj(obj.state)) throw new Error('This is not a Mycel memory file.');
   return normalize(obj.state);
 }
 

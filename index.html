@@ -9,7 +9,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>AI Being</title>
+  <meta name="apple-mobile-web-app-title" content="The Mycel" />
+  <title>The Mycel</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -29,6 +30,7 @@
 
       <div id="hud-top">
         <div id="day-counter">DAY <span id="day-num">1</span></div>
+        <div id="colony-counter">MYCEL: <span id="colony-num">1</span></div>
         <div id="status">Dusk · at home</div>
         <div id="brain-pill" class="fallback"><span class="dot"></span><span id="brain-label">Built-in brain</span></div>
       </div>
@@ -46,12 +48,17 @@
       </div>
 
       <button id="unhide" aria-label="Show UI"></button>
+
+      <div id="title-screen" role="dialog" aria-label="The Mycel">
+        <h1 class="title-glitch" data-text="THE MYCEL">THE MYCEL</h1>
+        <p class="title-tap">tap to begin</p>
+      </div>
       <div id="toast" role="status"></div>
 
       <div id="daycard" class="hidden" role="dialog" aria-label="Diary of the day">
         <div class="card">
           <div class="card-title" id="daycard-title">DAY 1</div>
-          <div class="card-sub">Diary</div>
+          <div class="card-sub">Mycel diary</div>
           <p id="daycard-text"></p>
           <div class="card-actions">
             <button id="btn-copy">Copy caption</button>
@@ -61,7 +68,7 @@
       </div>
 
       <aside id="diary" class="panel hidden" aria-label="Diary">
-        <header><h2>DIARY</h2><button id="btn-diary-close">Close</button></header>
+        <header><h2>MYCEL DIARY</h2><button id="btn-diary-close">Close</button></header>
         <div class="panel-body" id="diary-list"></div>
       </aside>
 
@@ -70,7 +77,7 @@
         <div class="panel-body">
           <section>
             <h3>Gemini brain</h3>
-            <p class="note">Paste a Gemini API key (free tier, from Google AI Studio). It is stored only in this browser on this device and sent only to Google's Gemini API. Without a key the being uses its built-in thoughts.</p>
+            <p class="note">Paste a Gemini API key (free tier, from Google AI Studio). It is stored only in this browser on this device and sent only to Google's Gemini API. Without a key the Mycel uses its built-in thoughts.</p>
             <label for="key-input">API key</label>
             <input id="key-input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste key…" />
             <div class="row">

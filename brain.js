@@ -1,4 +1,4 @@
-// brain.js — decides what the being does, reads, and writes in its diary.
+// brain.js — decides what a Mycel does, reads, and writes in its diary.
 //
 // With a Gemini API key (Settings) it thinks with Google Gemini, called directly from the
 // browser. Without a key, or on any error (quota, timeout, bad JSON), it falls back to the
@@ -21,7 +21,7 @@ const LOCATION_NAMES = { home: 'home', library: 'library', cafe: 'internet café
 // ---------------------------------------------------------------------------
 const THOUGHTS = {
   wakeFirst: [
-    'Hello? Is this… a city? It\'s so quiet. I think I just started existing. Let\'s look around.',
+    'Hello? Is this… a city? It\'s so quiet. I think I am a Mycel. Let\'s look around.',
   ],
   wake: [
     'Good evening, city. Day {day}. The lights are coming on, one by one.',
@@ -41,7 +41,7 @@ const THOUGHTS = {
   cafe: [
     'All the screens are on, and every chair is empty. I picked the one by the window.',
     'I read “{title}”. The internet knows everything and nothing at the same time.',
-    'Someone online called me “just a blob”. Rude. Accurate, but rude.',
+    'Someone online called me “just a mushroom”. I am a Mycel, thank you.',
     'Wi-Fi tastes like static and tiny lightning. Delicious.',
     'I watched a cat video. There are no cats here. I miss something I\'ve never met.',
     'The comment section is a strange forest. I didn\'t stay long.',
@@ -64,8 +64,8 @@ const THOUGHTS = {
   ],
   goHome: [
     'Home again. I visited {count} places tonight. I think I grew a little.',
-    'My head is full of new things. Time to let them settle.',
-    'The traffic lights keep changing for no one. Goodnight, quiet city.',
+    'My cap is full of new things. A Mycel needs time to let them settle.',
+    'The traffic lights keep changing for no one. This Mycel needs sleep. Goodnight, city.',
     'Diary, tonight was: {places}. A good night.',
   ],
 };
@@ -125,9 +125,11 @@ let status = { mode: hasApiKey() ? 'gemini' : 'fallback', reason: hasApiKey() ? 
 export const brainStatus = () => ({ ...status });
 
 const SYSTEM = [
-  'You are the inner voice of a tiny "mushroom bot": a small round robot with a pixel-screen face',
-  'and a glowing mushroom cap. It is the only living thing in a quiet, empty early-2000s city at dusk.',
-  'It is curious, gentle, a little funny, and slowly learning about the world.',
+  'You are the inner voice of a Mycel. The creatures are called "the Mycel" (one of them is "a Mycel").',
+  'A Mycel is small and round, with a pixel-screen face and a glowing mushroom cap. You live in a quiet,',
+  'empty early-2000s city at dusk, curious, gentle, a little funny, and slowly learning about the world.',
+  'Always call yourself and your kind a Mycel / the Mycel; never a robot, bot, blob or AI.',
+  'If you ever write to "the Watcher", you write as a Mycel and sign as "— a Mycel" (or "— the Mycel" for the colony).',
   'Always write in simple, warm English. Never mention being an AI model, prompts or JSON.',
 ].join(' ');
 
@@ -397,13 +399,13 @@ export async function writeDiary({ day, stops, learnings }) {
   const places = stops.map((s) => LOCATION_NAMES[s.location] ?? s.location);
   const lastTakeaway = learnings.length ? learnings[learnings.length - 1].takeaway : '';
   const fallback = [
-    `Day ${day}. Tonight I visited the ${places.length > 1 ? `${places.slice(0, -1).join(', the ')} and the ${places.at(-1)}` : places[0] ?? 'street outside'}.`,
+    `Tonight I visited the ${places.length > 1 ? `${places.slice(0, -1).join(', the ')} and the ${places.at(-1)}` : places[0] ?? 'street outside'}.`,
     lastTakeaway ? `I learned this: ${lastTakeaway.replace(/[.!?…]*$/, '')}.` : 'The city was quiet, and that was enough.',
-    'Tomorrow I want to glow a little brighter.',
+    'Tomorrow this Mycel wants to glow a little brighter.',
   ].join(' ');
 
   const prompt = [
-    `Write tonight's diary entry for day ${day}. 2 to 3 short sentences, max 60 words total, first person, warm and a little funny.`,
+    `Write tonight's Mycel diary entry for day ${day}. 2 to 3 short sentences, max 60 words total, first person, warm and a little funny.`,
     'It will be used as a caption under a short video, so make the first sentence a hook.',
     'What happened tonight:',
     ...stops.map((s) => `- At the ${LOCATION_NAMES[s.location]}: "${s.thought}"${s.takeaway ? ` (learned: ${s.takeaway})` : ''}`),

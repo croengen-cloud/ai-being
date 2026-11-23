@@ -1,7 +1,8 @@
-# AI Being
+# The Mycel
 
-A tiny mushroom bot, the only living thing in an empty early-2000s city at dusk.
-Every in-game day it wakes up, walks to 3–4 places, reads books and articles,
+The Mycel (singular: a Mycel) are small round creatures with a pixel-screen face and a glowing
+mushroom cap, the only living things in an empty early-2000s city at dusk.
+Every in-game day a Mycel wakes up, walks to 3–4 places, reads books and articles,
 learns one thing at a time, grows, and writes a short diary entry.
 
 Plain HTML + ES modules + Three.js (vendored in `vendor/`), no build step.
@@ -25,7 +26,7 @@ Open **Settings** and paste a Gemini API key (free tier, from Google AI Studio).
   `generativelanguage.googleapis.com` (header `x-goog-api-key`).
 - Recommended: restrict the key in the Google Cloud console to HTTP referrers of the
   site you host it on (e.g. `https://<user>.github.io/*`).
-- Without a key, or when Gemini fails (quota, timeout, bad answer), the being uses its
+- Without a key, or when Gemini fails (quota, timeout, bad answer), the Mycel uses its
   built-in thoughts. The game never waits forever (20 s timeout per call).
 - About 8–10 requests per in-game day.
 
@@ -55,8 +56,8 @@ at the park / shop). Stages unlock by learnings:
 
 All audio is generated live with the Web Audio API (`audio.js`): no sound files, no samples, no music.
 
-- **Creatures:** soft chirps and coos; pitch and rhythm follow the emotion (curious, scared, excited, sad, thinking).
-- **Colony hum:** a whisper + formant-choir drone that thickens with the number of creatures (`audio.setColony(n)`).
+- **The Mycel:** soft chirps and coos; pitch and rhythm follow the emotion (curious, scared, excited, sad, thinking).
+- **Colony hum:** a whisper + formant-choir drone that thickens with the number of Mycel (`audio.setColony(n)`).
 - **Ambient pad:** slow, dark A-minor drone that gets eerier with the day number and the colony's awareness
   (`audio.setStory({ day, awareness })`): tritone, pitch drift, a thin high whine, sub rumble.
 - **Events:** `audio.outage()`, `audio.rain(on)`, `audio.build()`, `audio.watcher()` (distorted glitch tone).
@@ -101,7 +102,7 @@ The other texts were written for this project.
 | `audio.js` | Procedural sound (Web Audio API) |
 | `memory.js` | Save state, growth stages, export / import |
 | `world.js` | The city |
-| `being.js` | The mushroom bot |
+| `being.js` | A Mycel (3D model, face, growth) |
 | `ui.js`, `style.css`, `index.html` | Overlay UI |
 
 Three.js is MIT licensed (`vendor/three.LICENSE`).

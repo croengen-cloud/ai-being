@@ -648,7 +648,7 @@ export function createWorld() {
   }
 
   // Street furniture
-  // Keep the close-up camera's line of sight to the being free at every location.
+  // Keep the close-up camera's line of sight to the Mycel free at every location.
   const nearSpot = (x, zSign) => Object.values(LOCATIONS).some((l) => Math.sign(NODES[l.node].z) === zSign && Math.abs(NODES[l.node].x - x) < 4.5);
   for (let x = -88; x <= 88; x += 16) {
     if (Math.abs(x) > 9 && !nearSpot(x, -1)) streetLamp(x, -4.6, { x: 0, z: 1 });

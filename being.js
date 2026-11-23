@@ -1,4 +1,4 @@
-// being.js — the AI Being as a "mushroom bot": a small round robot with a pixel-screen face,
+// being.js — a Mycel: a small round creature with a pixel-screen face,
 // stubby legs and a bioluminescent mushroom cap that grows with what it learns.
 import * as THREE from './vendor/three.module.js';
 
@@ -53,7 +53,7 @@ const FACES = {
 };
 export const EMOTIONS = ['neutral', 'curious', 'happy', 'sad', 'scared', 'thinking', 'sleep'];
 
-// Cap colour moves towards what the being is most interested in.
+// Cap colour moves towards what the Mycel is most interested in.
 const BASE_CAP = new THREE.Color(0x9b6dff); // purple-lavender
 const INTEREST_COLORS = {
   library: new THREE.Color(0x8a7dff), // deep violet-blue

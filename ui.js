@@ -64,6 +64,10 @@ export function init(h) {
   aware.addEventListener('input', () => { $('awareness-value').textContent = `${aware.value}%`; h.onSoundTest('awareness', Number(aware.value) / 100); });
 
   $('btn-copy').addEventListener('click', h.onCopyCaption);
+  $('title-screen').addEventListener('click', () => {
+    $('title-screen').classList.add('gone');
+    h.onTitleDismissed?.();
+  });
   $('btn-daycard-close').addEventListener('click', () => hideDayCard());
   el.daycard.addEventListener('click', (e) => { if (e.target === el.daycard || isClean()) hideDayCard(); });
 }
@@ -78,6 +82,9 @@ export function setDay(n, animate = true) {
   }
 }
 export function setStatus(text) { el.status.textContent = text; }
+/** Colony counter in the HUD: "MYCEL: 12" */
+export function setColonyCount(n) { $('colony-num').textContent = String(n); }
+export const titleVisible = () => !$('title-screen').classList.contains('gone');
 export function setStartEnabled(enabled, label) {
   el.start.disabled = !enabled;
   if (label) el.start.textContent = label;
@@ -255,7 +262,7 @@ export function renderDiary(state, locations) {
   if (!days.size) {
     const p = document.createElement('div');
     p.className = 'diary-empty';
-    p.textContent = 'Nothing yet. Press “Start Day” and the being will begin to explore.';
+    p.textContent = 'Nothing yet. Press “Start Day” and the Mycel will begin to explore.';
     el.diaryList.appendChild(p);
     return;
   }

@@ -59,7 +59,7 @@ let lastCaption = '';
 function refreshSettingsPanel() {
   ui.fillModels(MODELS, getModel());
   ui.setKeyField(hasApiKey());
-  if (!hasApiKey()) ui.setKeyStatus('No key: the being uses its built-in thoughts.');
+  if (!hasApiKey()) ui.setKeyStatus('No key: the Mycel uses its built-in thoughts.');
   const next = STAGES[state.stage + 1];
   ui.setMemorySummary(
     `Day ${state.day} · ${state.learnings.length} learnings · stage “${STAGES[state.stage].name}”` +
@@ -116,7 +116,7 @@ ui.init({
   onModel: (id) => { setModel(id); ui.setKeyStatus(`Model: ${id}`); },
   onExport: () => {
     const date = new Date().toISOString().slice(0, 10);
-    download(`ai-being-memory-day${state.day}-${date}.json`, exportState(state));
+    download(`mycel-memory-day${state.day}-${date}.json`, exportState(state));
     ui.toast('Memory exported');
   },
   onImport: (text) => {
@@ -179,7 +179,9 @@ const refreshSound = () => ui.setSoundState({
   volume: audio.volume, muted: audio.muted, running: audio.running, available: !!(window.AudioContext || window.webkitAudioContext),
 });
 audio.onChange(refreshSound);
-audio.setColony(1); // one creature so far; the colony comes with the story features
+const colonySize = 1; // one Mycel so far; the colony comes with the story features
+audio.setColony(colonySize);
+ui.setColonyCount(colonySize);
 audio.setStory({ day: state.day, awareness: 0 });
 refreshSound();
 const CHIRP = { happy: 'excited', curious: 'curious', scared: 'scared', sad: 'sad', neutral: 'neutral' };
@@ -403,7 +405,7 @@ async function runDay() {
 
   being.setSleeping(false);
   ui.setStatus('Dusk · at home');
-  await ui.showBanner(`DAY ${day}`, day === 1 ? 'The mushroom bot wakes up for the first time' : 'The city lights come on', 1600);
+  await ui.showBanner(`DAY ${day}`, day === 1 ? 'A Mycel wakes up for the first time' : 'The city lights come on', 1600);
   timeOfDay = 0; timeTarget = 0.05; world.setTimeOfDay(timeOfDay);
 
   const today = [];
@@ -486,7 +488,7 @@ async function runDay() {
   ui.setStatus('Night · writing the diary');
   const text = await think(brain.writeDiary({ day, stops, learnings: todaysLearnings }));
   state.diaryEntries.push({ day, text, places: today, at: new Date().toISOString() });
-  lastCaption = `Day ${day} of my AI being 🍄 ${text} #aibeing #indiedev`;
+  lastCaption = `🍄 THE MYCEL · Day ${day}\n${text}\n#themycel #mycel #indiedev`;
 
   setActiveLabel(null);
   state.day += 1;
@@ -509,6 +511,7 @@ window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.target instanceof HTMLButtonElement && (e.key === ' ' || e.key === 'Enter')) return;
   const k = e.key.toLowerCase();
+  if (ui.titleVisible()) { document.getElementById('title-screen').click(); return; }
   if (k === ' ') { e.preventDefault(); runDay(); }
   else if (k === 'h') ui.toggleClean();
   else if (k === 'v') setVerticalMode(!vertical);
