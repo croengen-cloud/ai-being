@@ -174,10 +174,14 @@ export async function planDay(s) {
     `Last diary: ${s.lastDiary || 'none'}`,
     `Recent learnings: ${(s.learnings ?? []).join(' ') || 'none'}`,
     `From day 3 thorn beetles come at night; spears keep them away.`,
+    ...socialLines(s.social),
     '',
     'Give: "goal" (short), "priorities" (0 to 2 each), an optional big "event", a colony "thought" (max 15 words),',
     'and optionally a short "watcherMessage" to the Watcher (max 20 words, signed "— the Mycel"), or an empty string.',
+    'You are the hive mind and feel every secret: "revealPlots" lists the ids of open plots that get discovered this morning',
+    '(pick from the list; a plot far along or with loyal witnesses is more likely to be found; keep some secret for drama), or ["none"].',
   ].join('\n');
+  const plotIds = (s.social?.openPlots ?? []).map((p) => String(p.id));
   const schema = {
     type: 'object',
     properties: {
@@ -186,11 +190,12 @@ export async function planDay(s) {
       event: { type: 'string', enum: EVENTS },
       thought: { type: 'string' },
       watcherMessage: { type: 'string' },
+      revealPlots: { type: 'array', items: { type: 'string', enum: ['none', ...plotIds] } },
     },
-    required: ['goal', 'priorities', 'event', 'thought', 'watcherMessage'],
+    required: ['goal', 'priorities', 'event', 'thought', 'watcherMessage', 'revealPlots'],
   };
   const out = await tryGemini(prompt, schema);
-  if (!out || typeof out !== 'object') return fallback;
+  if (!out || typeof out !== 'object') return fallback; // revealPlots undefined -> rule-based discovery
   const priorities = { ...fallback.priorities };
   for (const k of PRIORITY_KEYS) {
     const v = Number(out.priorities?.[k]);
@@ -204,7 +209,18 @@ export async function planDay(s) {
     event: EVENTS.includes(out.event) ? out.event : 'none',
     thought: clampWords(out.thought, 15) || fallback.thought,
     watcherMessage: watcher,
+    revealPlots: Array.isArray(out.revealPlots) ? out.revealPlots.map(String).filter((id) => plotIds.includes(id)) : null,
   };
+}
+
+function socialLines(soc) {
+  if (!soc) return [];
+  const out = [];
+  if (soc.factions?.length) out.push(`Factions: ${soc.factions.map((f) => `${f.name} (leader ${f.leader}, ${f.members})`).join('; ')}.`);
+  if (soc.openPlots?.length) out.push(`Secret plots: ${soc.openPlots.map((p) => `[${p.id}] ${p.plotter} plans to ${p.type} ${p.target ?? ''} with ${p.members} (${p.progress}% ready)`).join('; ')}.`);
+  if (soc.exiled?.length) out.push(`Exiled at the forest edge: ${soc.exiled.join(', ')}.`);
+  if (soc.history?.length) out.push(`Recent drama: ${soc.history.slice(-5).join(' ')}`);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +229,7 @@ export async function planDay(s) {
 export function fallbackDiary(s) {
   const st = s.stats;
   const parts = [];
+  if (s.drama?.length) parts.push(s.drama.at(-1));
   if (st.born.length) parts.push(`Today ${st.born.length === 1 ? `${st.born[0]} sprouted` : `${st.born.length} new Mycel sprouted, ${st.born.slice(0, 3).join(', ')} among them`}.`);
   else parts.push(`Today the Mycel worked the clearing.`);
   if (st.discoveries.length) parts.push(`We discovered ${st.discoveries.map((d) => ({ fire: 'the old fire pit', stream: 'the stream', tools: 'stone tools', spears: 'spears' }[d] ?? d)).join(' and ')}.`);
@@ -231,6 +248,8 @@ export async function writeDiary(s) {
     'first person plural ("we"), warm, a little funny, a little eerie. Mention a Mycel by name if it fits.',
     'It will be a caption under a short video, so the first sentence must be a hook.',
     `Population tonight: ${s.population}. Born today: ${s.stats.born.join(', ') || 'nobody'}. Lost: ${s.stats.lost.join(', ') || 'nobody'}.`,
+    (s.drama?.length ? 'The drama of the day matters most; lead with it (who plotted, fought, was exiled or betrayed):' : ''),
+    ...(s.drama ?? []).slice(-6).map((e) => `! ${e}`),
     'What happened today:',
     ...s.events.map((e) => `- ${e}`),
   ].join('\n');

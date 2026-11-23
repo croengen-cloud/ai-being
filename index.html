@@ -32,6 +32,14 @@
 
       <div id="thought" aria-live="polite"><div class="thought-who"></div><div class="thought-text"></div></div>
       <div id="feed" aria-live="polite"></div>
+      <div id="drama" aria-live="polite"></div>
+      <div id="inspect" class="hidden" aria-label="Mycel details">
+        <div class="ins-head"><span class="ins-dot"></span><b class="ins-name"></b><span class="ins-trait"></span><button id="btn-inspect-close" aria-label="Close">×</button></div>
+        <div class="ins-row ins-faction"></div>
+        <div class="ins-row ins-friends"></div>
+        <div class="ins-row ins-rivals"></div>
+        <div class="ins-row ins-doing"></div>
+      </div>
 
       <div id="banner"><div class="banner-title"></div><div class="banner-sub"></div></div>
 
@@ -60,7 +68,11 @@
           <button data-act="spores"><img data-icon="spore" alt="" />Gift spores</button>
           <button data-act="knowledge"><img data-icon="explore" alt="" />Send knowledge</button>
           <button data-act="message"><img data-icon="heart" alt="" />Message</button>
+          <button data-act="reveal"><img data-icon="whisper" alt="" />Reveal a plot</button>
+          <button data-act="rumor"><img data-icon="bolt" alt="" />Start a rumor</button>
+          <button data-act="gift"><img data-icon="crown" alt="" />Gift a faction</button>
         </div>
+        <div id="faction-pick" class="hidden"><div class="fp-label">Which faction gets the gift?</div><div class="fp-row"></div></div>
         <form id="message-form" class="hidden">
           <label for="message-input">Your message to the Mycel (you are the Watcher)</label>
           <input id="message-input" maxlength="140" autocomplete="off" placeholder="We see you…" />

@@ -572,6 +572,12 @@ class AudioEngine {
     else if (name === 'poke') { this._tone(t, 0.08, 900, 500, { type: 'triangle', gain: 0.16 * gainMul, fm: 0.3, bus: this.eventBus }); }
     else if (name === 'threat') { this._tone(t, 1.6, 73.4, 69.3, { type: 'sawtooth', gain: 0.18, fm: 0.3, attack: 0.3, bus: this.eventBus }); this._tone(t + 0.2, 1.4, 103.8, 98, { type: 'sawtooth', gain: 0.12, fm: 0.2, attack: 0.3, bus: this.eventBus }); }
     else if (name === 'lost') { this.chirp('sad', 1); this.spore(0.6); }
+    else if (name === 'shove') { this._tone(t, 0.09, 180, 90, { type: 'triangle', gain: 0.22 * gainMul, fm: 0.8, attack: 0.003, bus: this.eventBus }); this._tone(t + 0.07, 0.06, 620, 380, { type: 'square', gain: 0.05 * gainMul, fm: 0 }); }
+    else if (name === 'whisper') { this._tone(t, 0.35, 2400, 2100, { type: 'sine', gain: 0.025 * gainMul, vib: 40, vibRate: 18, fm: 0 }); }
+    else if (name === 'plotFound') { [523, 415, 330].forEach((f, i) => this._tone(t + i * 0.12, 0.22, f, f * 0.97, { type: 'square', gain: 0.07, fm: 0, bus: this.eventBus })); this.chirp('scared', gainMul); }
+    else if (name === 'coup') { [262, 330, 392, 523].forEach((f, i) => this._tone(t + i * 0.1, 0.3, f, f, { type: 'triangle', gain: 0.1, fm: 0.1, bus: this.eventBus })); }
+    else if (name === 'exile') { [392, 349, 311, 262].forEach((f, i) => this._tone(t + i * 0.18, 0.35, f, f * 0.98, { type: 'sine', gain: 0.1, vib: 5, fm: 0, bus: this.eventBus })); }
+    else if (name === 'betrayal') { this._tone(t, 0.6, 220, 110, { type: 'sawtooth', gain: 0.06, fm: 0.2, bus: this.eventBus }); }
   }
 
   /** Fire crackle loop; level 0..1 (fire intensity × nearness to the camera). */

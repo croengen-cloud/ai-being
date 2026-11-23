@@ -106,12 +106,12 @@ export function createMycelRenderer(scene) {
 
   // ---- Scratch ----
   const M = new THREE.Matrix4(), P = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3();
-  const tmpC = new THREE.Color();
+  const tmpC = new THREE.Color(), FC = new THREE.Color();
   const local = (x, y, z, sx = 1, sy = sx, sz = sx, q = null) => P.compose(V.set(x, y, z), q ?? Q.identity(), S.set(sx, sy, sz));
 
   let glowLevel = 0.6;
   return {
-    setNightGlow(v) { glowLevel = v; capUniforms.glow.value = v; glowMat.opacity = 0.35 + v * 0.35; },
+    setNightGlow(v) { glowLevel = v; capUniforms.glow.value = v; glowMat.opacity = Math.min(0.38, Math.max(0.1, (v - 0.5) * 0.35)); },
 
     /** list: array of Mycel sim objects (see colony.js) */
     update(list, time, camera) {
@@ -156,6 +156,8 @@ export function createMycelRenderer(scene) {
         const CB = local(0, capY + 0.02, 0, capS, capS * (1 + Math.sin(time * 2 + i) * 0.02), capS).premultiply(B).clone();
         cap.setMatrixAt(i, CB); rim.setMatrixAt(i, CB); gills.setMatrixAt(i, CB);
         tmpC.setHex(m.color);
+        if (m.faction && m.factionColor != null) tmpC.lerp(FC.setHex(m.factionColor), 0.45);
+        if (m.exiled) tmpC.multiplyScalar(0.55);
         cap.setColorAt(i, tmpC); rim.setColorAt(i, tmpC);
         const ns = Math.min(MAX_SPOTS, m.spots ?? 0);
         for (let k = 0; k < ns; k++) {
@@ -181,6 +183,21 @@ export function createMycelRenderer(scene) {
           const pop = Math.min(1, (m.bubbleT > 2.6 ? (3 - m.bubbleT) / 0.4 : m.bubbleT / 0.3));
           s.scale.set(spriteScale * 0.9 * pop, spriteScale * 1.05 * pop, 1);
           s.position.set(m.x - spriteScale * 0.35, headY + spriteScale * 0.55, m.z);
+          s.visible = true;
+        }
+        if (m.crown) {
+          const s = sprite(sp++);
+          s.material = getIconMat('crown');
+          s.scale.set(spriteScale * 0.5, spriteScale * 0.5, 1);
+          s.position.set(m.x, m.y + (capY + 0.75 * capS) * sc + spriteScale * 0.1, m.z);
+          s.visible = true;
+        }
+        const soc = m.socialIcon ?? (m.injured > 0.15 ? 'bandage' : null);
+        if (soc) {
+          const s = sprite(sp++);
+          s.material = getIconMat(soc);
+          s.scale.set(spriteScale * 0.5, spriteScale * 0.5, 1);
+          s.position.set(m.x - spriteScale * 0.45, headY + spriteScale * (m.bubbleT > 0 ? 1.25 : 0.3), m.z);
           s.visible = true;
         }
         if (m.icon) {

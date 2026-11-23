@@ -7,7 +7,7 @@ const MAX_LEARNINGS = 500;
 
 export function defaultState() {
   return {
-    version: 3,
+    version: 4,
     day: 1,
     colony: null, // snapshot from Colony.serialize(); null = fresh start with one Mycel
     diaryEntries: [], // { day, text, events: [..], population, at }
@@ -28,14 +28,37 @@ function normalizeColony(c) {
     day: Math.max(1, int(c.day, 1)),
     mycel: Array.isArray(c.mycel) ? c.mycel.filter(isObj).slice(0, 60).map((m) => ({
       name: str(m.name, 12), color: int(m.color, 0x9b6dff), age: int(m.age, 60), tool: ['axe', 'spear'].includes(m.tool) ? m.tool : null,
+      trait: TRAITS.includes(m.trait) ? m.trait : undefined, exiled: !!m.exiled, faction: m.faction ? str(m.faction, 24) : null,
+      injured: Math.min(1, Math.max(0, num(m.injured))),
     })) : [],
     resources: { food: int(c.resources?.food), wood: int(c.resources?.wood), stone: int(c.resources?.stone) },
     fallenTrees: Array.isArray(c.fallenTrees) ? c.fallenTrees.map((x) => int(x)).slice(0, 50) : [],
     storageBuilt: !!c.storageBuilt,
-    huts: Array.isArray(c.huts) ? c.huts.filter(isObj).slice(0, 20).map((h) => ({ slot: int(h.slot), progress: Math.min(1, num(h.progress)), built: !!h.built })) : [],
+    huts: Array.isArray(c.huts) ? c.huts.filter(isObj).slice(0, 20).map((h) => ({ slot: int(h.slot), progress: Math.min(1, num(h.progress)), built: !!h.built, damaged: !!h.damaged, faction: h.faction ? str(h.faction, 24) : null })) : [],
     fire: { discovered: !!c.fire?.discovered, lit: !!c.fire?.lit, fuel: Math.min(1, Math.max(0, num(c.fire?.fuel))) },
     discoveries: Array.isArray(c.discoveries) ? c.discoveries.map((d) => str(d, 20)).slice(0, 30) : [],
     awareness: Math.min(1, Math.max(0, num(c.awareness))),
+    social: normalizeSocial(c.social),
+  };
+}
+
+const TRAITS = ['brave', 'greedy', 'shy', 'loyal', 'jealous', 'curious'];
+const PLOT_TYPES = ['overthrow', 'steal', 'sabotage'];
+function normalizeSocial(so) {
+  if (!isObj(so)) return {};
+  const names = (a) => (Array.isArray(a) ? a.map((n) => str(n, 12)).filter(Boolean).slice(0, 60) : []);
+  return {
+    relations: Array.isArray(so.relations) ? so.relations.filter((r) => Array.isArray(r) && r.length === 3)
+      .map(([a, b, v]) => [str(a, 12), str(b, 12), Math.min(1, Math.max(-1, num(v)))]).filter((r) => r[0] && r[1]).slice(0, 900) : [],
+    factions: Array.isArray(so.factions) ? so.factions.filter(isObj).slice(0, 4).map((f) => ({
+      id: str(f.id, 24), leader: str(f.leader, 12), color: int(f.color, 0xff6a3a), camp: int(f.camp) % 4, name: str(f.name, 40),
+    })).filter((f) => f.id && f.leader) : [],
+    plots: Array.isArray(so.plots) ? so.plots.filter(isObj).slice(0, 10).map((p) => ({
+      id: str(p.id, 12), type: PLOT_TYPES.includes(p.type) ? p.type : 'steal', plotter: str(p.plotter, 12), target: p.target ? str(p.target, 12) : null,
+      members: names(p.members), progress: Math.min(1, Math.max(0, num(p.progress))), day: Math.max(1, int(p.day, 1)), discovered: !!p.discovered, done: false,
+    })).filter((p) => p.id && p.plotter) : [],
+    history: Array.isArray(so.history) ? so.history.filter(isObj).slice(-80).map((h) => ({ day: Math.max(1, int(h.day, 1)), type: str(h.type, 20), text: str(h.text, 200) })) : [],
+    nextPlotId: Math.max(1, int(so.nextPlotId, 1)),
   };
 }
 
@@ -87,7 +110,7 @@ export function clearState() {
 
 /** Export file contents. Contains only the memory, never settings or the API key. */
 export function exportState(state) {
-  return JSON.stringify({ app: 'ai-being', format: 3, exportedAt: new Date().toISOString(), state }, null, 2);
+  return JSON.stringify({ app: 'ai-being', format: 4, exportedAt: new Date().toISOString(), state }, null, 2);
 }
 
 /** Parse an export file. Throws with a readable message if it is not one of ours. */

@@ -21,11 +21,20 @@ A local server is required (ES modules and `fetch` do not work over `file://`).
 
 ## Playing
 
-- **Camera:** angled top-down. Drag to pan, pinch / mouse wheel to zoom, twist two fingers to rotate.
-  After a few seconds without input the **auto camera** follows the most interesting action.
+- **Camera:** drag to pan, pinch / mouse wheel to zoom from a single Mycel's face (eye level) out to
+  the whole clearing, twist two fingers to rotate. **Tap a Mycel** to follow it and see its card
+  (name, personality, faction, friends, rivals). After a few seconds without input the **auto camera**
+  follows the most interesting action; drama always wins and gets a close shot.
 - **Speed:** 1× / 2× / 4× / pause. One day (day + night) takes about 2 minutes at 1×.
 - **Creator:** rain berries, rain, sunshine, light the fire, send thorn beetles, gift spores, send
   knowledge (a page from the reading material), or write a message to the colony as the Watcher.
+- **Drama:** every Mycel has a personality (brave, greedy, shy, loyal, jealous, curious) and
+  relationships (heart = friends, bolt = rivals). From about 15 Mycel, factions form around leaders
+  (crown, tinted caps, banner at their camp). Jealous and greedy Mycel plot at night (whisper icon):
+  raid the storage, wreck a hut, overthrow a leader. Each morning the hive mind decides which plots
+  are discovered (without a key, a rule does). Scuffles are cartoon shoving with dust clouds; losers
+  limp (bandage) and may be exiled to the forest edge until a friend brings them back.
+  Creator extras: reveal a plot, start a rumor, give a gift to one faction.
 - Icons over the heads show what each Mycel is doing (axe, berry, wood, stone, hammer, spear, fire,
   zzz, !). Emote bubbles pop up when their mood changes (happy, curious, scared, angry, sad, hungry, in love).
 
@@ -95,7 +104,10 @@ The other texts were written for this project.
 | --- | --- |
 | `main.js` | Boot, render loop, day cycle, creator actions |
 | `forest.js` | The clearing: terrain, stream, trees, bushes, items, fire pit, storage, huts, light, spores |
-| `colony.js` | Simulation: needs, tasks, building, crafting, spores, threats, events |
+| `colony.js` | Simulation: needs, tasks, building, crafting, spores, threats, events, scuffles |
+| `social.js` | Personalities, relationships, factions, plots, exile, reconciliation |
+| `assets.js` | Model library: CC0 GLB models from `assets/models/manifest.json`, procedural fallbacks |
+| `effects.js` | Wind sway, water shader, smoke, fireflies, leaves, butterflies, bloom, adaptive quality |
 | `mycel.js` | Instanced rendering of the Mycel, emote bubbles, task icons, sprouts, beetles |
 | `camera.js` | God-view camera with touch controls and auto camera |
 | `icons.js` | Pixel faces, emote bubbles and task icons drawn on canvases |
@@ -106,3 +118,12 @@ The other texts were written for this project.
 | `ui.js`, `style.css`, `index.html` | Overlay UI |
 
 Three.js is MIT licensed (`vendor/three.LICENSE`).
+
+## Models
+
+Without model files the world uses built-in low-poly models. To use a CC0 pack (for example the
+Kenney Nature Kit), put the `.glb` files into `assets/models/` and list them in
+`assets/models/manifest.json`, e.g. `{ "files": ["tree_oak.glb", "rock_largeA.glb"] }`. The kind
+(tree, pine, bush, flower, grass, reed, lily, rock, stone, log, stump, mushroom) is guessed from the
+Kenney file name, or given explicitly: `{ "file": "my_tree.glb", "kind": "tree" }`. Models are scaled
+to fit and drawn instanced.

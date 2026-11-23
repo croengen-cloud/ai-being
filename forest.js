@@ -1,12 +1,17 @@
-// forest.js — the world: a bright forest clearing with a stream, choppable trees, berry
-// bushes, food mushrooms, stones, sticks, a fire pit, huts and a storage pile.
-// Everything that exists many times is an InstancedMesh (cheap on phones).
+// forest.js — the world: a bright forest clearing with gentle hills, a dirt path, a stream
+// with stones, a small pond with reeds and lily pads, a dense forest edge (two LOD rings,
+// split into sectors), fallen trees and stumps, choppable trees, berry bushes, food mushrooms,
+// stones, sticks, a fire pit, huts, a storage pile and faction banners.
+// Models come from assets.js (CC0 packs if present, otherwise hand-made low-poly models).
 import * as THREE from './vendor/three.module.js';
 import { glowTexture } from './icons.js';
+import { instancedSet } from './assets.js';
+import { applyWind, createWaterMaterial, wind } from './effects.js';
 
 export const CLEARING_R = 24;
 export const FIRE_POS = { x: 1.5, z: 3 };
 export const STORAGE_POS = { x: -5, z: 6.5 };
+export const POND = { x: -16.5, z: -3.5, r: 3.4 };
 
 function rng(seed) {
   return () => {
@@ -21,7 +26,7 @@ const R = (a, b) => a + rand() * (b - a);
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 // ---------------------------------------------------------------------------
-// Stream path and terrain height
+// Stream, path, pond and terrain height
 // ---------------------------------------------------------------------------
 const STREAM = new THREE.CatmullRomCurve3([
   [-70, -34], [-40, -24], [-20, -15], [-6, -16.5], [8, -12], [20, -17], [40, -26], [70, -30],
@@ -38,6 +43,20 @@ function streamDist(x, z) {
   return Math.sqrt(best);
 }
 
+// Dirt path: storage -> fire -> ford over the stream
+const PATH = [[STORAGE_POS.x, STORAGE_POS.z], [-1.5, 4.8], [FIRE_POS.x, FIRE_POS.z], [3.2, -3], [4.6, -8], [6.5, -12.6]];
+function segDist(x, z, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az;
+  const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
+  return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+}
+export function pathDist(x, z) {
+  let d = Infinity;
+  for (let i = 0; i < PATH.length - 1; i++) d = Math.min(d, segDist(x, z, ...PATH[i], ...PATH[i + 1]));
+  return d;
+}
+const pondDist = (x, z) => Math.hypot(x - POND.x, z - POND.z);
+
 function rawHeight(x, z) {
   const d = Math.hypot(x, z);
   const hills = (Math.sin(x * 0.08) + Math.cos(z * 0.07) + Math.sin((x + z) * 0.05)) * 0.3
@@ -45,6 +64,8 @@ function rawHeight(x, z) {
   const edge = smooth(CLEARING_R * 0.85, CLEARING_R * 1.7, d);
   let h = hills * (0.5 + edge * 2.5) + edge * 2.2;
   h -= 0.85 * (1 - smooth(0.9, 2.8, streamDist(x, z)));
+  h -= 0.1 * (1 - smooth(0.5, 1.4, pathDist(x, z)));
+  h -= 1.0 * (1 - smooth(POND.r * 0.6, POND.r + 1.4, pondDist(x, z)));
   return h;
 }
 
@@ -62,11 +83,12 @@ export function heightAt(x, z) {
   return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
 }
 export const isNearStream = (x, z, r = 2.4) => streamDist(x, z) < r;
+export const inPond = (x, z, pad = 0) => pondDist(x, z) < POND.r + pad;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...extra });
+const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, flatShading: true, ...extra });
 const dummy = new THREE.Object3D();
 const tmpColor = new THREE.Color();
 
@@ -76,22 +98,26 @@ function instanced(geo, mat, count, { cast = true, receive = true } = {}) {
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   return m;
 }
-function setInst(mesh, i, x, y, z, s = 1, ry = 0, rx = 0, rz = 0, sy = s) {
+function matrixOf(x, y, z, s = 1, ry = 0, rx = 0, rz = 0, sy = s) {
   dummy.position.set(x, y, z);
   dummy.rotation.set(rx, ry, rz);
   dummy.scale.set(s, sy, s);
   dummy.updateMatrix();
-  mesh.setMatrixAt(i, dummy.matrix);
+  return dummy.matrix;
 }
-function hideInst(mesh, i) { dummy.position.set(0, -50, 0); dummy.scale.set(0, 0, 0); dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix); }
+function setInst(mesh, i, ...args) { mesh.setMatrixAt(i, matrixOf(...args)); }
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+function hideInst(mesh, i) { mesh.setMatrixAt(i, ZERO); }
 
+function blocked(x, z) {
+  return isNearStream(x, z, 2.6) || inPond(x, z, 1.8) || pathDist(x, z) < 1.4
+    || Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 4.5 || Math.hypot(x - STORAGE_POS.x, z - STORAGE_POS.z) < 3.5;
+}
 function freeSpot(minR, maxR, taken, minGap = 2.5) {
-  for (let k = 0; k < 200; k++) {
+  for (let k = 0; k < 300; k++) {
     const a = R(0, Math.PI * 2), r = Math.sqrt(R(minR * minR, maxR * maxR));
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (isNearStream(x, z, 2.6)) continue;
-    if (Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 4.5) continue;
-    if (Math.hypot(x - STORAGE_POS.x, z - STORAGE_POS.z) < 3.5) continue;
+    if (blocked(x, z)) continue;
     if (taken.some((p) => Math.hypot(p.x - x, p.z - z) < minGap)) continue;
     const p = { x, z };
     taken.push(p);
@@ -105,32 +131,68 @@ export const HUT_SLOTS = Array.from({ length: 14 }, (_, i) => {
   const a = (i / 14) * Math.PI * 2 + 0.4;
   const r = i < 7 ? 8 : 12.5;
   return { x: FIRE_POS.x + Math.cos(a + (i >= 7 ? 0.22 : 0)) * r, z: FIRE_POS.z + Math.sin(a + (i >= 7 ? 0.22 : 0)) * r };
-}).filter((p) => !isNearStream(p.x, p.z, 3) && Math.hypot(p.x - STORAGE_POS.x, p.z - STORAGE_POS.z) > 3.5);
+}).filter((p) => !isNearStream(p.x, p.z, 3) && !inPond(p.x, p.z, 2.5) && pathDist(p.x, p.z) > 2 && Math.hypot(p.x - STORAGE_POS.x, p.z - STORAGE_POS.z) > 3.5);
+
+// Faction camp spots near the clearing's rim
+export const CAMP_SPOTS = [0.9, 2.6, 4.3, 5.6].map((a) => ({ x: Math.cos(a) * 18.5, z: Math.sin(a) * 18.5 }))
+  .map((p) => (blocked(p.x, p.z) ? { x: p.x * 0.85, z: p.z * 0.85 } : p));
+
+const SWAY_REF = { tree: 7, pine: 8, bush: 1.4, flower: 0.45, grass: 0.45, reed: 1.3 };
 
 // ---------------------------------------------------------------------------
 // The world
 // ---------------------------------------------------------------------------
-export function createForest({ shadowSize = 1024 } = {}) {
+export async function createForest(lib, { shadowSize = 1024 } = {}) {
   const scene = new THREE.Scene();
   const taken = [];
   const glow = glowTexture();
+  const waters = [];
+  const windMatCache = new Map();
+  const onMaterial = (kind) => (mat, part) => {
+    if (!part.sway) return mat;
+    const key = `${mat.uuid}:${kind}`;
+    if (!windMatCache.has(key)) windMatCache.set(key, applyWind(mat, part.sway * Math.pow(SWAY_REF[kind] ?? 1, 0.6), SWAY_REF[kind] ?? 1));
+    return windMatCache.get(key);
+  };
+
+  /** Place instances of a library kind. items: [{x, z, y?, s, ry, rx?, rz?, v}] */
+  function place(kind, items, { cast = false, colorFn } = {}) {
+    const variants = lib.get(kind);
+    if (!variants.length) return [];
+    const byV = new Map();
+    for (const it of items) { const v = (it.v ?? Math.floor(rand() * 1e6)) % variants.length; if (!byV.has(v)) byV.set(v, []); byV.get(v).push(it); }
+    const sets = [];
+    for (const [v, list] of byV) {
+      const set = instancedSet(variants[v], list.length, { cast, receive: true, colors: !!colorFn, onMaterial: onMaterial(kind) });
+      list.forEach((it, i) => {
+        set.setMatrixAt(i, matrixOf(it.x, it.y ?? heightAt(it.x, it.z), it.z, it.s ?? 1, it.ry ?? 0, it.rx ?? 0, it.rz ?? 0, it.sy ?? it.s ?? 1));
+        if (colorFn) set.setColorAt(i, colorFn(it, tmpColor));
+      });
+      set.update();
+      scene.add(set.group);
+      sets.push(set);
+    }
+    return sets;
+  }
 
   // ---- Terrain ----
-  const SIZE = 160, SEG = 110;
+  const SIZE = 170, SEG = 120;
   const tg = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
   tg.rotateX(-Math.PI / 2);
   const pos = tg.attributes.position;
   const cols = new Float32Array(pos.count * 3);
-  const cGrass = new THREE.Color(0x63c247), cLight = new THREE.Color(0x9be06a), cDark = new THREE.Color(0x2f7f3a);
-  const cMoss = new THREE.Color(0x2c6a37), cBank = new THREE.Color(0xc9b77a);
+  const cGrass = new THREE.Color(0x5fbf45), cLight = new THREE.Color(0x9be06a), cDark = new THREE.Color(0x2f7f3a);
+  const cMoss = new THREE.Color(0x2a6535), cBank = new THREE.Color(0xc2ad72), cDirt = new THREE.Color(0xa77f52), cMud = new THREE.Color(0x6f6a4a);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     pos.setY(i, heightAt(x, z));
     const d = Math.hypot(x, z);
     const n = Math.sin(x * 0.35) * Math.cos(z * 0.31) * 0.5 + Math.sin((x - z) * 0.13) * 0.5;
-    tmpColor.copy(cGrass).lerp(cLight, Math.max(0, n) * 0.6).lerp(cDark, Math.max(0, -n) * 0.4);
+    tmpColor.copy(cGrass).lerp(cLight, Math.max(0, n) * 0.55).lerp(cDark, Math.max(0, -n) * 0.4);
     tmpColor.lerp(cMoss, smooth(CLEARING_R * 0.9, CLEARING_R * 1.5, d) * 0.8);
-    tmpColor.lerp(cBank, (1 - smooth(1.4, 3.2, streamDist(x, z))) * 0.7);
+    tmpColor.lerp(cBank, (1 - smooth(1.4, 3.2, streamDist(x, z))) * 0.75);
+    tmpColor.lerp(cMud, (1 - smooth(POND.r * 0.8, POND.r + 1.6, pondDist(x, z))) * 0.75);
+    tmpColor.lerp(cDirt, (1 - smooth(0.45, 1.25, pathDist(x, z))) * 0.85);
     cols[i * 3] = tmpColor.r; cols[i * 3 + 1] = tmpColor.g; cols[i * 3 + 2] = tmpColor.b;
   }
   tg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
@@ -139,18 +201,9 @@ export function createForest({ shadowSize = 1024 } = {}) {
   terrain.receiveShadow = true;
   scene.add(terrain);
 
-  // ---- Stream ----
-  const rip = document.createElement('canvas'); rip.width = 64; rip.height = 128;
-  const rg = rip.getContext('2d');
-  rg.fillStyle = '#3fb8e0'; rg.fillRect(0, 0, 64, 128);
-  for (let i = 0; i < 40; i++) {
-    rg.fillStyle = `rgba(255,255,255,${R(0.08, 0.3)})`;
-    rg.fillRect(R(0, 64), R(0, 128), R(6, 22), R(1, 3));
-  }
-  const ripTex = new THREE.CanvasTexture(rip);
-  ripTex.colorSpace = THREE.SRGBColorSpace;
-  ripTex.wrapS = ripTex.wrapT = THREE.RepeatWrapping;
-  ripTex.repeat.set(1, 40);
+  // ---- Water: stream + pond ----
+  const streamMat = createWaterMaterial({ flow: true });
+  waters.push(streamMat);
   const wverts = [], wuvs = [], widx = [];
   const W = 1.7;
   streamPts.forEach((p, i) => {
@@ -164,149 +217,179 @@ export function createForest({ shadowSize = 1024 } = {}) {
   const wg = new THREE.BufferGeometry();
   wg.setAttribute('position', new THREE.Float32BufferAttribute(wverts, 3));
   wg.setAttribute('uv', new THREE.Float32BufferAttribute(wuvs, 2));
-  wg.setIndex(widx); wg.computeVertexNormals();
-  const water = new THREE.Mesh(wg, new THREE.MeshStandardMaterial({
-    map: ripTex, color: 0xbff4ff, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.88,
-    emissive: 0x1d6f8a, emissiveIntensity: 0.25,
-  }));
-  water.receiveShadow = true;
+  wg.setIndex(widx);
+  const water = new THREE.Mesh(wg, streamMat);
+  water.renderOrder = 2;
   scene.add(water);
-  // Pebbles along the banks
-  const pebbles = instanced(new THREE.DodecahedronGeometry(0.35, 0), std(0xa9b0b4, { flatShading: true }), 120, { cast: false });
-  for (let i = 0; i < 120; i++) {
-    const p = streamPts[Math.floor(R(0, streamPts.length))];
-    const a = R(0, Math.PI * 2), r = R(1.6, 2.6);
-    const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
-    setInst(pebbles, i, x, heightAt(x, z) + 0.05, z, R(0.4, 1.1), R(0, 6), R(0, 3), 0, R(0.3, 0.7));
-  }
-  scene.add(pebbles);
+  const pondMat = createWaterMaterial({ flow: false });
+  waters.push(pondMat);
+  const pondY = heightAt(POND.x + POND.r + 1.2, POND.z) - 0.32;
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(POND.r + 0.5, 32), pondMat);
+  pond.rotation.x = -Math.PI / 2;
+  pond.position.set(POND.x, pondY, POND.z);
+  pond.renderOrder = 2;
+  scene.add(pond);
 
-  // ---- Background forest ring (instanced, not choppable) ----
-  const trunkGeo = new THREE.CylinderGeometry(0.22, 0.38, 3, 7);
-  trunkGeo.translate(0, 1.5, 0);
-  const blobGeo = new THREE.IcosahedronGeometry(1, 2);
-  const coneGeo = new THREE.ConeGeometry(1, 2.4, 9);
-  const FOREST_N = 300;
-  const fTrunks = instanced(trunkGeo, std(0x7a5236), FOREST_N);
-  const fBlobs = instanced(blobGeo, std(0xffffff, { roughness: 0.75 }), FOREST_N * 3);
-  const fCones = instanced(coneGeo, std(0xffffff, { roughness: 0.75 }), FOREST_N * 3);
-  let nb = 0, nc = 0;
-  const greens = [0x3fae4a, 0x2e9a48, 0x58c05a, 0x2c8a52, 0x47b86e, 0x6cc85a];
-  for (let i = 0; i < FOREST_N; i++) {
-    const a = R(0, Math.PI * 2), r = R(CLEARING_R + 3, 72);
+  // stones along the banks, stepping stones at the ford
+  const bank = [];
+  for (let i = 0; i < 110; i++) {
+    const p = streamPts[Math.floor(R(0, streamPts.length))];
+    const a = R(0, Math.PI * 2), r = R(1.7, 2.7);
+    const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+    bank.push({ x, z, y: heightAt(x, z) + 0.05, s: R(0.5, 1.2), ry: R(0, 6) });
+  }
+  for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; bank.push({ x: POND.x + Math.cos(a) * (POND.r + 0.7), z: POND.z + Math.sin(a) * (POND.r + 0.7), s: R(0.5, 1), ry: a }); }
+  for (let i = 0; i < 5; i++) { const t = i / 4; bank.push({ x: 6.5 + (t - 0.5) * 0.8, z: -12.6 - 1.6 + t * 3.2, y: heightAt(6.5, -14) + 0.42, s: 1.3, sy: 0.5, ry: i }); }
+  place('stone', bank);
+
+  // ---- Forest edge: near ring (detailed, sectors, shadows) and far ring (simple LOD) ----
+  const nearItems = [[], [], [], []], farItems = [];
+  const sideClearing = (x, z) => Math.sin(Math.atan2(z, x) * 3 + 1) > 0.82 && Math.hypot(x, z) < 34; // a few gaps / small clearings
+  for (let i = 0; i < 520; i++) {
+    const a = R(0, Math.PI * 2), r = R(CLEARING_R + 2.5, 80);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (isNearStream(x, z, 3)) { hideInst(fTrunks, i); continue; }
-    const s = R(1.2, 2.2) * (r > 45 ? 1.25 : 1);
-    const y = heightAt(x, z);
-    setInst(fTrunks, i, x, y, z, s * 0.9, R(0, 6), 0, 0, s);
-    const pine = rand() < 0.35;
-    for (let k = 0; k < 3; k++) {
-      tmpColor.setHex(greens[Math.floor(R(0, greens.length))]);
-      if (pine) {
-        setInst(fCones, nc, x, y + s * (2.6 + k * 1.3), z, s * (1.7 - k * 0.4), 0, 0, 0, s * 1.1);
-        fCones.setColorAt(nc++, tmpColor);
-      } else {
-        setInst(fBlobs, nb, x + R(-0.7, 0.7) * s, y + s * (3.4 + k * 0.8), z + R(-0.7, 0.7) * s, s * (1.7 - k * 0.25), R(0, 6));
-        fBlobs.setColorAt(nb++, tmpColor);
-      }
+    if (isNearStream(x, z, 3) || sideClearing(x, z)) continue;
+    const it = { x, z, s: R(0.85, 1.25) * (r > 50 ? 1.2 : 1), ry: R(0, 6), pine: rand() < 0.35, v: Math.floor(R(0, 99)) };
+    if (r < 48) nearItems[Math.floor(((a + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 2))].push(it);
+    else farItems.push(it);
+  }
+  for (const sector of nearItems) {
+    place('tree', sector.filter((t) => !t.pine), { cast: true });
+    place('pine', sector.filter((t) => t.pine), { cast: true });
+  }
+  // far LOD: one cheap blob/cone per tree
+  {
+    const farBlob = new THREE.IcosahedronGeometry(2.4, 0); farBlob.translate(0, 5, 0);
+    const farCone = new THREE.ConeGeometry(2.1, 6.5, 6); farCone.translate(0, 5, 0);
+    const farTrunk = new THREE.CylinderGeometry(0.2, 0.32, 3, 5); farTrunk.translate(0, 1.5, 0);
+    const leafMat = new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.85 });
+    const fb = instanced(farBlob, leafMat, farItems.length, { cast: false });
+    const fc = instanced(farCone, leafMat, farItems.length, { cast: false });
+    const ft = instanced(farTrunk, std(0x6b4630), farItems.length, { cast: false });
+    let nb = 0, nc = 0;
+    const greens = [0x2f8a3e, 0x2c7f45, 0x3d8f2e, 0x1f5e3a, 0x2f7a3f];
+    farItems.forEach((t, i) => {
+      ft.setMatrixAt(i, matrixOf(t.x, heightAt(t.x, t.z), t.z, t.s));
+      tmpColor.setHex(greens[i % greens.length]);
+      if (t.pine) { fc.setMatrixAt(nc, matrixOf(t.x, heightAt(t.x, t.z), t.z, t.s)); fc.setColorAt(nc++, tmpColor); }
+      else { fb.setMatrixAt(nb, matrixOf(t.x, heightAt(t.x, t.z), t.z, t.s, t.ry, 0, 0, t.s * 0.85)); fb.setColorAt(nb++, tmpColor); }
+    });
+    fb.count = nb; fc.count = nc;
+    for (const m of [fb, fc, ft]) { m.computeBoundingSphere(); scene.add(m); }
+  }
+
+  // ---- Ground cover: grass clumps, flowers, reeds, lilies, rocks, stumps, fallen trees, wild mushrooms ----
+  const grass = [];
+  for (let i = 0; i < 1500; i++) {
+    const a = R(0, Math.PI * 2), r = Math.sqrt(R(0, 1)) * (CLEARING_R + 9);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (isNearStream(x, z, 1.8) || inPond(x, z, 0.6) || pathDist(x, z) < 0.9 || Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 2.2) continue;
+    grass.push({ x, z, s: R(0.8, 1.6), ry: R(0, 6) });
+  }
+  place('grass', grass, { colorFn: (it, c) => c.setHSL(0.27 + R(-0.03, 0.03), 0.6, 0.55 + R(-0.08, 0.08)) });
+  const flowerSpots = [];
+  const flowers = [];
+  for (let i = 0; i < 18; i++) { // flowers grow in patches
+    const c = freeSpot(5, CLEARING_R + 2, [], 1);
+    flowerSpots.push(c);
+    const v = Math.floor(R(0, 6));
+    for (let k = 0; k < 16; k++) {
+      const x = c.x + R(-1.8, 1.8), z = c.z + R(-1.8, 1.8);
+      if (blocked(x, z)) continue;
+      flowers.push({ x, z, s: R(0.8, 1.3), ry: R(0, 6), v: rand() < 0.75 ? v : Math.floor(R(0, 6)) });
     }
   }
-  fBlobs.count = nb; fCones.count = nc;
-  scene.add(fTrunks, fBlobs, fCones);
-
-  // ---- Grass tufts and flowers ----
-  const bladeGeo = new THREE.BufferGeometry();
-  const bv = [];
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI;
-    const dx = Math.cos(a) * 0.12, dz = Math.sin(a) * 0.12;
-    bv.push(-dx * 1.6, 0, -dz * 1.6, dx * 1.6, 0, dz * 1.6, dx * 0.3, 0.26, dz * 0.3);
-  }
-  bladeGeo.setAttribute('position', new THREE.Float32BufferAttribute(bv, 3));
-  bladeGeo.computeVertexNormals();
-  const GRASS_N = 2200;
-  const grass = instanced(bladeGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: 0.9 }), GRASS_N, { cast: false });
-  for (let i = 0; i < GRASS_N; i++) {
-    const a = R(0, Math.PI * 2), r = Math.sqrt(R(0, 1)) * (CLEARING_R + 8);
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (isNearStream(x, z, 1.8) || Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 2.2) { hideInst(grass, i); continue; }
-    setInst(grass, i, x, heightAt(x, z), z, R(0.8, 1.6), R(0, 6));
-    grass.setColorAt(i, tmpColor.setHSL(R(0.26, 0.31), R(0.5, 0.65), R(0.36, 0.46)));
-  }
-  scene.add(grass);
-  const FLOWER_N = 320;
-  const flowers = instanced(new THREE.IcosahedronGeometry(0.11, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x222222, roughness: 0.6 }), FLOWER_N, { cast: false });
-  const flowerCols = [0xff7ab8, 0xffffff, 0x8fb8ff, 0xc58fff, 0xff9f5a, 0x9ff0ff];
-  for (let i = 0; i < FLOWER_N; i++) {
-    const a = R(0, Math.PI * 2), r = Math.sqrt(R(0, 1)) * (CLEARING_R + 4);
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (isNearStream(x, z, 1.8)) { hideInst(flowers, i); continue; }
-    setInst(flowers, i, x, heightAt(x, z) + R(0.18, 0.35), z, R(0.8, 1.3));
-    flowers.setColorAt(i, tmpColor.setHex(flowerCols[Math.floor(R(0, flowerCols.length))]));
-  }
-  scene.add(flowers);
+  place('flower', flowers);
+  const reeds = [];
+  for (let i = 0; i < 34; i++) { const a = R(0, Math.PI * 2); reeds.push({ x: POND.x + Math.cos(a) * (POND.r + R(-0.1, 0.6)), z: POND.z + Math.sin(a) * (POND.r + R(-0.1, 0.6)), s: R(0.8, 1.2), ry: R(0, 6) }); }
+  for (let i = 0; i < 40; i++) { const p = streamPts[60 + Math.floor(R(0, 150))]; const a = R(0, Math.PI * 2); reeds.push({ x: p.x + Math.cos(a) * 1.9, z: p.z + Math.sin(a) * 1.9, s: R(0.7, 1.1), ry: R(0, 6) }); }
+  place('reed', reeds);
+  const lilies = [];
+  for (let i = 0; i < 9; i++) { const a = R(0, Math.PI * 2), r = R(0.6, POND.r - 0.6); lilies.push({ x: POND.x + Math.cos(a) * r, z: POND.z + Math.sin(a) * r, y: pondY + 0.02, s: R(0.8, 1.3), ry: R(0, 6), v: i }); }
+  place('lily', lilies);
+  const rocks = [];
+  for (let i = 0; i < 16; i++) { const p = freeSpot(CLEARING_R - 5, CLEARING_R + 5, taken, 3); rocks.push({ x: p.x, z: p.z, y: heightAt(p.x, p.z) - 0.1, s: R(0.8, 1.8), ry: R(0, 6) }); }
+  place('rock', rocks, { cast: true });
+  const stumps = [];
+  for (let i = 0; i < 6; i++) { const p = freeSpot(CLEARING_R - 6, CLEARING_R + 3, taken, 3); stumps.push({ x: p.x, z: p.z, s: R(0.9, 1.3), ry: R(0, 6) }); }
+  place('stump', stumps, { cast: true });
+  const fallen = [];
+  for (let i = 0; i < 4; i++) { const p = freeSpot(CLEARING_R - 3, CLEARING_R + 6, taken, 5); fallen.push({ x: p.x, z: p.z, y: heightAt(p.x, p.z) - 0.05, s: 1.4, ry: R(0, 6), sy: 1.3 }); }
+  place('log', fallen.map((f) => ({ ...f, s: 2.3, sy: 1.6 })), { cast: true });
+  const wild = [];
+  for (let i = 0; i < 36; i++) { const a = R(0, Math.PI * 2), r = R(CLEARING_R + 1, CLEARING_R + 8); const x = Math.cos(a) * r, z = Math.sin(a) * r; if (!isNearStream(x, z, 2)) wild.push({ x, z, s: R(0.8, 1.5), ry: R(0, 6) }); }
+  place('mushroom', wild);
 
   // ---- Choppable trees ----
   const TREE_N = 14;
   const trees = [];
-  const cTrunk = instanced(trunkGeo, std(0x8a5a3a), TREE_N);
-  const cCrown = instanced(blobGeo, std(0xffffff, { roughness: 0.75 }), TREE_N * 3);
+  const treeVariants = lib.get('tree');
   for (let i = 0; i < TREE_N; i++) {
     const p = freeSpot(14, CLEARING_R - 1, taken, 4);
-    const s = R(1.15, 1.45);
-    const t = { id: i, x: p.x, z: p.z, y: heightAt(p.x, p.z), s, hp: 6, fall: 0, fallDir: R(0, Math.PI * 2), state: 'standing', reservedBy: null, crowns: [] };
-    for (let k = 0; k < 3; k++) t.crowns.push({ ox: R(-0.6, 0.6) * s, oy: s * (3.3 + k * 0.85), oz: R(-0.6, 0.6) * s, cs: s * (1.25 - k * 0.25), color: greens[Math.floor(R(0, greens.length))] });
-    trees.push(t);
+    trees.push({ id: i, x: p.x, z: p.z, y: heightAt(p.x, p.z), s: R(0.8, 1.0), ry: R(0, 6), v: i % treeVariants.length, hp: 6, fall: 0, fallDir: R(0, Math.PI * 2), state: 'standing', reservedBy: null });
   }
-  const treeMat = new THREE.Matrix4(), partMat = new THREE.Matrix4(), q = new THREE.Quaternion(), axis = new THREE.Vector3();
+  const treeSets = treeVariants.map((variant, v) => {
+    const list = trees.filter((t) => t.v === v);
+    list.forEach((t, k) => { t.inst = k; });
+    if (!list.length) return null;
+    const set = instancedSet(variant, list.length, { cast: true, onMaterial: onMaterial('tree') });
+    scene.add(set.group);
+    return set;
+  });
+  const treeMat = new THREE.Matrix4(), q = new THREE.Quaternion(), axis = new THREE.Vector3(), qs = new THREE.Quaternion(), qy = new THREE.Quaternion();
   function drawTree(t) {
-    if (t.state === 'gone') {
-      hideInst(cTrunk, t.id);
-      for (let k = 0; k < 3; k++) hideInst(cCrown, t.id * 3 + k);
-      return;
-    }
-    // falling = rotate around the base, along fallDir
+    const set = treeSets[t.v];
+    if (!set) return;
+    if (t.state === 'gone') { set.setMatrixAt(t.inst, ZERO); set.markDirty(); return; }
     const ang = t.fall * (Math.PI / 2) * 0.96;
     axis.set(Math.cos(t.fallDir + Math.PI / 2), 0, Math.sin(t.fallDir + Math.PI / 2));
     q.setFromAxisAngle(axis, ang);
     const shake = t.shakeT > 0 ? Math.sin(t.shakeT * 60) * 0.03 * t.shakeT * 4 : 0;
-    treeMat.compose(new THREE.Vector3(t.x, t.y, t.z), q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), shake)), new THREE.Vector3(1, 1, 1));
-    partMat.makeScale(t.s * 0.9, t.s, t.s * 0.9);
-    cTrunk.setMatrixAt(t.id, partMat.premultiply(treeMat));
-    t.crowns.forEach((c, k) => {
-      partMat.compose(new THREE.Vector3(c.ox, c.oy, c.oz), new THREE.Quaternion(), new THREE.Vector3(c.cs, c.cs, c.cs));
-      cCrown.setMatrixAt(t.id * 3 + k, partMat.premultiply(treeMat));
-      cCrown.setColorAt(t.id * 3 + k, tmpColor.setHex(c.color));
-    });
+    qs.setFromAxisAngle(new THREE.Vector3(0, 0, 1), shake);
+    qy.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.ry);
+    treeMat.compose(new THREE.Vector3(t.x, t.y, t.z), q.multiply(qs).multiply(qy), new THREE.Vector3(t.s, t.s, t.s));
+    set.setMatrixAt(t.inst, treeMat);
+    set.markDirty();
   }
   trees.forEach(drawTree);
-  scene.add(cTrunk, cCrown);
+  treeSets.forEach((s) => s?.update());
 
   // ---- Items: sticks, stones, logs, food mushrooms ----
   const items = []; // { kind, x, z, alive, idx, reservedBy }
-  const stickGeo = new THREE.CylinderGeometry(0.05, 0.06, 1.1, 5); stickGeo.rotateZ(Math.PI / 2);
-  const sticks = instanced(stickGeo, std(0x8b5e3c), 40, { cast: true });
-  const stones = instanced(new THREE.DodecahedronGeometry(0.42, 0), std(0x9aa3a8, { flatShading: true }), 40);
-  const logGeo = new THREE.CylinderGeometry(0.28, 0.3, 1.8, 8); logGeo.rotateZ(Math.PI / 2);
-  const logs = instanced(logGeo, std(0x8a5a3a), 60);
-  const mushStem = instanced(new THREE.CylinderGeometry(0.07, 0.09, 0.28, 6), std(0xfff4e6), 30, { cast: false });
-  const mushCap = instanced(new THREE.SphereGeometry(0.22, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), std(0xd98a4a, { roughness: 0.6 }), 30);
-  const meshes = { stick: sticks, stone: stones, log: logs, mushroom: mushCap };
-  const caps = { stick: 40, stone: 40, log: 60, mushroom: 30 };
+  const twig = (() => {
+    const a = new THREE.CylinderGeometry(0.045, 0.06, 1.15, 5); a.rotateZ(Math.PI / 2);
+    const b = new THREE.CylinderGeometry(0.025, 0.035, 0.45, 4); b.rotateZ(Math.PI / 2 - 0.7); b.translate(0.15, 0.08, 0);
+    const g = new THREE.BufferGeometry();
+    const ga = a.toNonIndexed(), gb = b.toNonIndexed();
+    const P = new Float32Array(ga.attributes.position.count * 3 + gb.attributes.position.count * 3);
+    P.set(ga.attributes.position.array); P.set(gb.attributes.position.array, ga.attributes.position.array.length);
+    g.setAttribute('position', new THREE.BufferAttribute(P, 3)); g.computeVertexNormals();
+    return g;
+  })();
+  const caps = { stick: 40, stone: 40, log: 60, mushroom: 34 };
+  const itemSets = {
+    stick: { meshes: [instanced(twig, std(0x8b5e3c), caps.stick)], set: null },
+    stone: { set: instancedSet(lib.get('stone')[0], caps.stone, { cast: true }) },
+    log: { set: instancedSet(lib.get('log')[0], caps.log, { cast: true }) },
+    mushroom: { set: instancedSet(lib.get('mushroom')[Math.min(1, lib.get('mushroom').length - 1)], caps.mushroom, { cast: false }) },
+  };
+  const itemApi = (kind) => {
+    const it = itemSets[kind];
+    if (it.set) return it.set;
+    const m = it.meshes[0];
+    return { group: m, setMatrixAt: (i, mat) => m.setMatrixAt(i, mat), markDirty: () => { m.instanceMatrix.needsUpdate = true; }, update: () => { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); } };
+  };
   const counters = { stick: 0, stone: 0, log: 0, mushroom: 0 };
+  for (const k of Object.keys(caps)) { const a = itemApi(k); for (let i = 0; i < caps[k]; i++) a.setMatrixAt(i, ZERO); scene.add(a.group); a.markDirty(); }
   function drawItem(it) {
-    const m = meshes[it.kind];
-    if (!it.alive) { hideInst(m, it.idx); if (it.kind === 'mushroom') hideInst(mushStem, it.idx); return; }
+    const a = itemApi(it.kind);
+    if (!it.alive) { a.setMatrixAt(it.idx, ZERO); a.markDirty(); return; }
     const y = heightAt(it.x, it.z);
-    if (it.kind === 'stick') setInst(m, it.idx, it.x, y + 0.06, it.z, 1, it.rot);
-    else if (it.kind === 'stone') setInst(m, it.idx, it.x, y + 0.15, it.z, it.size, it.rot, it.rot, 0, it.size * 0.7);
-    else if (it.kind === 'log') setInst(m, it.idx, it.x, y + 0.28, it.z, 1, it.rot);
-    else {
-      setInst(mushStem, it.idx, it.x, y + 0.14, it.z, it.size);
-      setInst(m, it.idx, it.x, y + 0.26 * it.size, it.z, it.size, 0, 0, 0, it.size * 0.8);
-    }
-    m.instanceMatrix.needsUpdate = true;
-    if (it.kind === 'mushroom') mushStem.instanceMatrix.needsUpdate = true;
+    if (it.kind === 'stick') a.setMatrixAt(it.idx, matrixOf(it.x, y + 0.06, it.z, 1, it.rot));
+    else if (it.kind === 'stone') a.setMatrixAt(it.idx, matrixOf(it.x, y + 0.05, it.z, it.size * 1.1, it.rot));
+    else if (it.kind === 'log') a.setMatrixAt(it.idx, matrixOf(it.x, y - 0.05, it.z, 0.85, it.rot));
+    else a.setMatrixAt(it.idx, matrixOf(it.x, y, it.z, it.size * 1.2, it.rot));
+    a.markDirty();
   }
   function addItem(kind, x, z, extra = {}) {
     if (counters[kind] >= caps[kind]) {
@@ -321,31 +404,29 @@ export function createForest({ shadowSize = 1024 } = {}) {
     drawItem(it);
     return it;
   }
-  for (const m of Object.values(meshes)) for (let i = 0; i < m.count; i++) hideInst(m, i);
-  for (let i = 0; i < 30; i++) hideInst(mushStem, i);
   for (let i = 0; i < 22; i++) { const p = freeSpot(3, CLEARING_R, taken, 1.2); addItem('stick', p.x, p.z); }
   for (let i = 0; i < 16; i++) { const p = freeSpot(4, CLEARING_R, taken, 1.2); addItem('stone', p.x, p.z); }
   for (let i = 0; i < 10; i++) {
     const p = streamPts[60 + Math.floor(R(0, 140))];
     const a = R(0, Math.PI * 2);
-    addItem('stone', p.x + Math.cos(a) * 2.6, p.z + Math.sin(a) * 2.6);
+    addItem('stone', p.x + Math.cos(a) * 2.7, p.z + Math.sin(a) * 2.7);
   }
   for (let i = 0; i < 14; i++) { const p = freeSpot(6, CLEARING_R + 1, taken, 1.2); addItem('mushroom', p.x, p.z); }
-  scene.add(sticks, stones, logs, mushStem, mushCap);
+  for (const k of Object.keys(caps)) itemApi(k).update();
 
   // ---- Berry bushes ----
   const BUSH_N = 11, BERRIES = 6;
   const bushes = [];
-  const bushMesh = instanced(new THREE.IcosahedronGeometry(1, 2), std(0x2f9a45, { roughness: 0.85 }), BUSH_N);
-  const berryMesh = instanced(new THREE.SphereGeometry(0.14, 8, 6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, emissive: 0x220011 }), BUSH_N * BERRIES, { cast: false });
-  const berryCols = [0xe8264f, 0x6b3cff, 0xff4f9a];
+  const bushItems = [];
   for (let i = 0; i < BUSH_N; i++) {
     const p = freeSpot(7, CLEARING_R - 1, taken, 3);
-    const b = { id: i, x: p.x, z: p.z, y: heightAt(p.x, p.z), berries: BERRIES, regrow: 0, color: berryCols[i % 3], spots: [] };
-    for (let k = 0; k < BERRIES; k++) { const a = (k / BERRIES) * Math.PI * 2 + R(0, 0.5); b.spots.push({ x: Math.cos(a) * 0.85, y: R(0.5, 1.2), z: Math.sin(a) * 0.85 }); }
-    setInst(bushMesh, i, b.x, b.y + 0.55, b.z, 1.05, R(0, 6), 0, 0, 0.8);
+    const b = { id: i, x: p.x, z: p.z, y: heightAt(p.x, p.z), berries: BERRIES, regrow: 0, color: [0xe8264f, 0x6b3cff, 0xff4f9a][i % 3], spots: [] };
+    for (let k = 0; k < BERRIES; k++) { const a = (k / BERRIES) * Math.PI * 2 + R(0, 0.5); b.spots.push({ x: Math.cos(a) * 0.8, y: R(0.45, 1.05), z: Math.sin(a) * 0.8 }); }
+    bushItems.push({ x: b.x, z: b.z, s: 1.05, ry: R(0, 6), v: i });
     bushes.push(b);
   }
+  place('bush', bushItems, { cast: true });
+  const berryMesh = instanced(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, emissive: 0x220011 }), BUSH_N * BERRIES, { cast: false });
   function drawBush(b) {
     b.spots.forEach((s, k) => {
       const idx = b.id * BERRIES + k;
@@ -356,8 +437,9 @@ export function createForest({ shadowSize = 1024 } = {}) {
     if (berryMesh.instanceColor) berryMesh.instanceColor.needsUpdate = true;
   }
   bushes.forEach(drawBush);
-  scene.add(bushMesh, berryMesh);
+  scene.add(berryMesh);
 
+  const logGeo = new THREE.CylinderGeometry(0.28, 0.3, 1.8, 8); logGeo.rotateZ(Math.PI / 2);
   // ---- Fire pit (undiscovered at start) ----
   const fire = { ...FIRE_POS, discovered: false, lit: false, fuel: 0, level: 0 };
   const fireGroup = new THREE.Group();
@@ -474,6 +556,7 @@ export function createForest({ shadowSize = 1024 } = {}) {
     h.roof.scale.setScalar(Math.max(0.01, smooth(0.75, 1, p)));
     h.door.visible = p > 0.6;
     h.frame.forEach((f) => { f.visible = p < 0.95; });
+    h.roof.rotation.z = h.damaged ? 0.5 : 0; h.roof.position.x = h.damaged ? 0.45 : 0;
   }
 
   // ---- Spores and light (particles) ----
@@ -531,6 +614,27 @@ export function createForest({ shadowSize = 1024 } = {}) {
     beams.push(b); scene.add(b);
   }
 
+
+  // ---- Faction banners ----
+  const banners = [];
+  function addBanner(x, z, color) {
+    const g = new THREE.Group();
+    g.position.set(x, heightAt(x, z), z);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 3.2, 6), std(0x7b5236));
+    pole.position.y = 1.6; pole.castShadow = true;
+    const flagGeo = new THREE.PlaneGeometry(1.3, 0.8, 6, 1); flagGeo.translate(0.65, 0, 0);
+    const flag = new THREE.Mesh(flagGeo, new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, side: THREE.DoubleSide, roughness: 0.6 }));
+    flag.position.y = 2.75; flag.castShadow = true;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(2.6, 2.9, 32), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.06;
+    g.add(pole, flag, ring);
+    scene.add(g);
+    const b = { g, flag, base: flagGeo.attributes.position.array.slice() };
+    banners.push(b);
+    return b;
+  }
+  function removeBanner(b) { if (!b) return; scene.remove(b.g); banners.splice(banners.indexOf(b), 1); }
+
   // ---- Sky, fog, lights ----
   const skyUniforms = { top: { value: new THREE.Color() }, bottom: { value: new THREE.Color() } };
   const sky = new THREE.Mesh(new THREE.SphereGeometry(400, 24, 12), new THREE.ShaderMaterial({
@@ -539,27 +643,38 @@ export function createForest({ shadowSize = 1024 } = {}) {
     fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying float vY; void main(){ gl_FragColor = vec4(mix(bottom, top, smoothstep(-0.05, 0.6, vY)), 1.0);\n#include <colorspace_fragment>\n}',
   }));
   scene.add(sky);
-  scene.fog = new THREE.Fog(0xcfeee0, 45, 120);
+  scene.fog = new THREE.Fog(0xcfeee0, 50, 140);
 
-  const hemi = new THREE.HemisphereLight(0xd8f2ff, 0x4f7a32, 1.25);
+  const hemi = new THREE.HemisphereLight(0xd8f2ff, 0x4f7a32, 1.2);
   const sun = new THREE.DirectionalLight(0xfff0d0, 2.8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(shadowSize, shadowSize);
-  Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 5, far: 120 });
-  sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.04; sun.shadow.radius = 4;
+  Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 5, far: 140 });
+  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.05; sun.shadow.radius = 5;
   scene.add(hemi, sun, sun.target);
+  const sunDir = new THREE.Vector3(0.6, 0.7, 0.4).normalize();
+  let shadowFocus = { x: 0, z: 0, size: 26 };
+  function setShadowFocus(x, z, size) {
+    shadowFocus = { x, z, size: Math.max(10, Math.min(40, size)) };
+  }
+  function setShadowSize(px) {
+    sun.shadow.mapSize.set(px, px);
+    sun.shadow.map?.dispose(); sun.shadow.map = null;
+  }
 
-  // ---- Day/night (phase 0..1: 0 dawn, 0.1-0.6 day, 0.7 dusk, 0.75-0.95 night) ----
+  // ---- Day/night (phase 0..1): dawn, day, golden hour, dusk, night, pre-dawn ----
   const K = (h) => new THREE.Color(h);
   const SKY = [
-    [0.0, K(0xffc8a8), K(0xffe6c8)], [0.12, K(0x6cc4ff), K(0xd2f2ff)], [0.6, K(0x6cc4ff), K(0xd2f2ff)],
-    [0.7, K(0xff9a7a), K(0xffd2a0)], [0.78, K(0x1a1f4a), K(0x3a3a6a)], [0.94, K(0x141a40), K(0x2c3060)], [1.0, K(0xffc8a8), K(0xffe6c8)],
+    [0.0, K(0xf5b8a8), K(0xffe2c4)], [0.06, K(0x9fd0ff), K(0xffe8d0)], [0.14, K(0x62c0ff), K(0xd6f2ff)], [0.55, K(0x5fbcff), K(0xd2f0ff)],
+    [0.63, K(0x7aa8e8), K(0xffd8a8)], [0.69, K(0x8a6ab8), K(0xff9e70)], [0.74, K(0x3a3478), K(0x9a5a7a)], [0.8, K(0x161c48), K(0x2e3264)],
+    [0.93, K(0x121840), K(0x283060)], [1.0, K(0xf5b8a8), K(0xffe2c4)],
   ];
-  const FOG = [[0, K(0xf2dcc8)], [0.12, K(0xcfeee0)], [0.6, K(0xcfeee0)], [0.7, K(0xf0c8a8)], [0.78, K(0x262a4a)], [0.94, K(0x20264a)], [1, K(0xf2dcc8)]];
+  const FOG = [[0, K(0xf0d4c0)], [0.14, K(0xcdeee0)], [0.55, K(0xcdeee0)], [0.66, K(0xf2d0a8)], [0.72, K(0xb07a8a)], [0.8, K(0x262c50)], [0.93, K(0x222a50)], [1, K(0xf0d4c0)]];
+  const SUNCOL = [[0, K(0xffb08a)], [0.12, K(0xfff0d8)], [0.55, K(0xfff4e0)], [0.66, K(0xffc078)], [0.72, K(0xff8a5a)], [0.78, K(0x9fb0ff)], [0.95, K(0x9fb0ff)], [1, K(0xffb08a)]];
   const sample = (keys, t, idx, out) => {
     for (let i = 0; i < keys.length - 1; i++) {
       if (t >= keys[i][0] && t <= keys[i + 1][0]) {
-        const u = (t - keys[i][0]) / (keys[i + 1][0] - keys[i][0]);
+        const u = smooth(0, 1, (t - keys[i][0]) / (keys[i + 1][0] - keys[i][0]));
         return out.copy(keys[i][idx]).lerp(keys[i + 1][idx], u);
       }
     }
@@ -570,23 +685,32 @@ export function createForest({ shadowSize = 1024 } = {}) {
     sample(SKY, t, 1, skyUniforms.top.value);
     sample(SKY, t, 2, skyUniforms.bottom.value);
     sample(FOG, t, 1, scene.fog.color);
-    // daylight 0..1
-    daylight = t < 0.08 ? 0.35 + t / 0.08 * 0.65 : t < 0.66 ? 1 : t < 0.78 ? 1 - (t - 0.66) / 0.12 : t < 0.93 ? 0 : (t - 0.93) / 0.07 * 0.35;
-    const a = (Math.min(Math.max((t - 0.0) / 0.75, 0), 1)) * Math.PI;
-    sun.position.set(Math.cos(a) * 40, 12 + Math.sin(a) * 40, 22);
-    sun.intensity = 0.55 + daylight * 2.3;
-    if (daylight > 0.3) sun.color.setHSL(0.1, 0.6, 0.6 + daylight * 0.3); else sun.color.setHSL(0.62, 0.5, 0.75); // moonlight
-    hemi.intensity = 0.7 + daylight * 0.6;
-    hemi.color.setHSL(0.58, 0.6, 0.45 + daylight * 0.4);
-    beamMat.opacity = 0.2 * daylight;
+    daylight = t < 0.08 ? 0.35 + (t / 0.08) * 0.65 : t < 0.64 ? 1 : t < 0.78 ? 1 - smooth(0.64, 0.78, t) : t < 0.93 ? 0 : ((t - 0.93) / 0.07) * 0.35;
+    const a = Math.min(Math.max(t / 0.74, 0), 1) * Math.PI;
+    sunDir.set(Math.cos(a) * 0.8, 0.25 + Math.sin(a) * 0.75, 0.45).normalize();
+    if (daylight < 0.25) sunDir.set(-0.4, 0.8, 0.45).normalize(); // moon
+    sample(SUNCOL, t, 1, sun.color);
+    sun.intensity = 0.55 + daylight * 2.4;
+    hemi.intensity = 0.65 + daylight * 0.65;
+    hemi.color.setHSL(0.58, 0.6, 0.42 + daylight * 0.42);
+    hemi.groundColor.setHSL(0.27, 0.35, 0.12 + daylight * 0.18);
+    beamMat.opacity = 0.18 * daylight * (t > 0.6 ? 1.4 : 1);
     spMat.opacity = 0.6 + (1 - daylight) * 0.4;
+    for (const w of waters) { w.uniforms.uLight.value = 0.35 + daylight * 0.65; w.uniforms.uSky.value.copy(skyUniforms.bottom.value); }
     return daylight;
   }
 
   // ---- Per-frame update ----
   function update(dt, time, camera) {
     sky.position.copy(camera.position);
-    ripTex.offset.y -= dt * 0.35;
+    wind.time.value = time;
+    for (const w of waters) w.uniforms.uTime.value = time;
+    // sun + shadow camera follow the area the camera looks at
+    const fy = heightAt(shadowFocus.x, shadowFocus.z);
+    sun.target.position.set(shadowFocus.x, fy, shadowFocus.z);
+    sun.position.copy(sun.target.position).addScaledVector(sunDir, 70);
+    const sc = sun.shadow.camera;
+    if (Math.abs(sc.right - shadowFocus.size) > 0.5) { sc.left = sc.bottom = -shadowFocus.size; sc.right = sc.top = shadowFocus.size; sc.updateProjectionMatrix(); }
     // fire
     fire.level += ((fire.lit ? 1 : 0) - fire.level) * Math.min(1, dt * 2);
     const fl = fire.level;
@@ -598,6 +722,12 @@ export function createForest({ shadowSize = 1024 } = {}) {
     fireGlow.material.opacity = fl * (0.5 + Math.sin(time * 11) * 0.05) * (0.6 + (1 - daylight) * 0.6);
     fireLight.intensity = fl * (18 + Math.sin(time * 17) * 3) * (0.4 + (1 - daylight) * 0.9);
     hint.material.opacity = fire.discovered ? 0 : 0.18 + Math.sin(time * 2) * 0.08;
+    // banners wave
+    for (const b of banners) {
+      const p = b.flag.geometry.attributes.position;
+      for (let i = 0; i < p.count; i++) { const x = b.base[i * 3]; p.setZ(i, Math.sin(time * 5 + x * 3) * 0.12 * x); }
+      p.needsUpdate = true;
+    }
     // falling trees
     for (const t of trees) {
       if (t.shakeT > 0) { t.shakeT = Math.max(0, t.shakeT - dt); drawTree(t); }
@@ -615,8 +745,6 @@ export function createForest({ shadowSize = 1024 } = {}) {
         }
       }
     }
-    cTrunk.instanceMatrix.needsUpdate = true;
-    cCrown.instanceMatrix.needsUpdate = true;
     // bushes regrow
     for (const b of bushes) {
       if (b.berries < BERRIES) {
@@ -643,12 +771,15 @@ export function createForest({ shadowSize = 1024 } = {}) {
     spGeo.attributes.position.needsUpdate = true;
   }
 
+  /** Brown dust cloud (scuffles). */
+  function dust(x, z, n = 26) { puff(x, z, 0xb89a70, n, 0.4); }
+
   // ---- Public API ----
   return {
-    scene, sun, update, setPhase, puff, heightAt,
-    trees, bushes, items, fire, storage, huts,
+    scene, sun, update, setPhase, puff, dust, heightAt, setShadowFocus, setShadowSize,
+    trees, bushes, items, fire, storage, huts, flowerSpots,
     get daylight() { return daylight; },
-    drawTree, drawBush, drawItem, drawStorage, drawHut, addHut, addItem,
+    drawTree, drawBush, drawItem, drawStorage, drawHut, addHut, addItem, addBanner, removeBanner,
     chopTree(t, power = 1) {
       if (t.state !== 'standing') return false;
       t.hp -= power;
@@ -662,16 +793,18 @@ export function createForest({ shadowSize = 1024 } = {}) {
     restore({ fallenTrees = [], storageBuilt = false, huts: savedHuts = [], fire: savedFire = {} } = {}) {
       for (const id of fallenTrees) { const t = trees[id]; if (t) { t.state = 'gone'; drawTree(t); } }
       storage.built = storageBuilt; storage.progress = storageBuilt ? 1 : 0;
-      for (const h of savedHuts) addHut(h.slot, h.built ? 1 : h.progress ?? 0);
+      for (const h of savedHuts) { const hut = addHut(h.slot, h.built ? 1 : h.progress ?? 0); if (hut) { hut.damaged = !!h.damaged; hut.faction = h.faction ?? null; if (h.damaged) drawHut(hut); } }
       fire.discovered = !!savedFire.discovered; fire.lit = !!savedFire.lit; fire.fuel = savedFire.fuel ?? 0;
     },
     respawnMorning() {
-      // a few new sticks, stones and mushrooms each morning
       for (let i = 0; i < 6; i++) { const p = freeSpot(4, CLEARING_R, [], 1); addItem('stick', p.x, p.z); }
       for (let i = 0; i < 3; i++) { const p = freeSpot(4, CLEARING_R, [], 1); addItem('stone', p.x, p.z); }
       for (let i = 0; i < 8; i++) { const p = freeSpot(6, CLEARING_R + 1, [], 1); addItem('mushroom', p.x, p.z); }
     },
     randomEdgePoint() { const a = R(0, Math.PI * 2); return { x: Math.cos(a) * (CLEARING_R + 4), z: Math.sin(a) * (CLEARING_R + 4) }; },
-    randomClearingPoint(r = CLEARING_R - 2) { const a = R(0, Math.PI * 2), d = Math.sqrt(R(0, 1)) * r; return { x: Math.cos(a) * d, z: Math.sin(a) * d }; },
+    randomClearingPoint(r = CLEARING_R - 2) {
+      for (let k = 0; k < 20; k++) { const a = R(0, Math.PI * 2), d = Math.sqrt(R(0, 1)) * r; const x = Math.cos(a) * d, z = Math.sin(a) * d; if (!inPond(x, z, 1)) return { x, z }; }
+      return { x: 0, z: 0 };
+    },
   };
 }

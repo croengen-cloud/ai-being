@@ -1,6 +1,9 @@
 // main.js — boot, render loop, day cycle, hive mind calls, creator actions, UI wiring.
 import * as THREE from './vendor/three.module.js';
 import { createForest } from './forest.js';
+import { loadModelLibrary } from './assets.js';
+import { createLife, createPost, createQuality } from './effects.js';
+import { DRAMA_TYPES } from './social.js';
 import { createMycelRenderer } from './mycel.js';
 import { Colony, DAY_SECONDS } from './colony.js';
 import { createGodCamera } from './camera.js';
@@ -36,11 +39,28 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 
-const world = createForest({ shadowSize: isTouch ? 1024 : 2048 });
+const lib = await loadModelLibrary();
+const world = await createForest(lib, { shadowSize: isTouch ? 1024 : 2048 });
 const scene = world.scene;
 const mycelRenderer = createMycelRenderer(scene);
-const god = createGodCamera(canvas, { onUserInput: () => { if (god.auto) ui.setAutoCam(true); } });
+const god = createGodCamera(canvas, { onUserInput: () => { if (god.auto) ui.setAutoCam(true); }, onTap: (x, y) => pickMycel(x, y) });
 const camera = god.camera;
+const life = createLife(scene, { firePos: world.fire, heightAt: world.heightAt, clearingR: 24, flowerSpots: world.flowerSpots });
+const post = createPost(renderer, scene, camera);
+const BASE_PR = Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2);
+let pixelRatio = BASE_PR;
+// Adaptive quality: bloom off first, then smaller shadows, then fewer pixels.
+const quality = createQuality([
+  { bloom: true, shadow: isTouch ? 1024 : 2048, pr: BASE_PR },
+  { bloom: false, shadow: isTouch ? 1024 : 2048, pr: BASE_PR },
+  { bloom: false, shadow: 1024, pr: Math.min(BASE_PR, 1.25) },
+  { bloom: false, shadow: 512, pr: 1 },
+  { bloom: false, shadow: 512, pr: 0.8 },
+], (q) => {
+  post.setBloom(q.bloom);
+  world.setShadowSize(q.shadow);
+  if (q.pr !== pixelRatio) { pixelRatio = q.pr; layout?.(); }
+});
 
 // Rain (creator action)
 const RAIN_N = 900;
@@ -61,6 +81,7 @@ function makeColony() {
     onChirp: (emotion, m) => audio.chirp(emotion, nearness(m)),
   });
   colony.day = state.day;
+  colony.dayLength = DAY_SECONDS;
 }
 makeColony();
 
@@ -82,6 +103,7 @@ function playSound(name, p) {
   else if (name === 'knock') audio.knock(g);
   else if (name === 'build') audio.build();
   else if (name === 'fight') audio.chirp('angry', g);
+  else if (name === 'shove' || name === 'poke' || name === 'bonk') audio.sfx(name, g);
   else audio.sfx(name, g);
 }
 function unlockAudio() { audio.unlock(); }
@@ -95,7 +117,21 @@ audio.onChange(refreshSound);
 const BIG = new Set(['discovery', 'fire', 'build', 'treeFall', 'creator', 'love', 'defend', 'watcher']);
 const BAD = new Set(['threat', 'steal', 'lost', 'fight', 'fireOut']);
 let birthsBatch = 0, birthTimer = 0;
+const DRAMA_TAG = { plot: 'CONSPIRACY', plotFound: 'PLOT DISCOVERED', coup: 'COUP', exile: 'EXILED', betrayal: 'BETRAYAL', reconcile: 'RECONCILED', scuffle: 'SCUFFLE', rumor: 'RUMOR', faction: 'FACTIONS', leader: 'NEW LEADER', rivalry: 'RIVALS', friendship: 'FRIENDS', steal: 'THEFT', sabotage: 'SABOTAGE' };
+let lastDramaAt = 0;
 function handleEvent(e) {
+  if (e.drama || DRAMA_TYPES.has(e.type)) {
+    state.dramaToday = [...(state.dramaToday ?? []), e.text].slice(-12);
+    const now = performance.now();
+    // the big drama line: never two within 3 s unless it is a bigger moment
+    if (e.drama && (now - lastDramaAt > 3000 || ['plotFound', 'coup', 'exile', 'rumor'].includes(e.type) || /Watcher/.test(e.text))) {
+      lastDramaAt = now;
+      ui.showDrama(e.text, DRAMA_TAG[e.type] ?? 'DRAMA');
+      if (['plotFound', 'coup', 'betrayal'].includes(e.type)) audio.sfx(e.type, nearness(e));
+    }
+    ui.feed(e.text, ['friendship', 'reconcile', 'leader', 'faction'].includes(e.type) ? 'big' : 'bad');
+    return;
+  }
   if (e.type === 'birth') {
     // births come in waves: summarize them in the feed
     birthsBatch++;
@@ -181,6 +217,8 @@ ui.init({
   onMuteToggle: () => { unlockAudio(); audio.setMuted(!audio.muted); },
   onCopyCaption: async () => { ui.toast((await copyText(lastCaption)) ? 'Caption copied' : 'Copy failed: select the text and copy it manually'); },
   onTitleDismissed: () => startGame(),
+  getFactions: () => colony.social.factions.map((f) => ({ id: f.id, name: f.name, color: f.color })),
+  onInspectClose: () => { inspected = null; god.state.follow = null; document.getElementById('app').classList.remove('inspecting'); },
 });
 async function testKey() {
   ui.setKeyStatus('Testing…');
@@ -208,8 +246,9 @@ function layout() {
   if (vertical && !phoneUpright && vw / vh > 9 / 16) W = Math.round(vh * 9 / 16);
   stage.style.width = `${W}px`;
   stage.style.height = `${H}px`;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2));
+  renderer.setPixelRatio(pixelRatio);
   renderer.setSize(W, H, false);
+  post.setSize(W, H, pixelRatio);
   camera.aspect = W / H;
   camera.fov = W < H ? 52 : 38;
   camera.updateProjectionMatrix();
@@ -242,6 +281,7 @@ async function morningPlan() {
   const plan = await brain.planDay(hiveSummary());
   refreshBrainPill();
   colony.plan = plan;
+  colony.social.morning(Array.isArray(plan.revealPlots) ? plan.revealPlots.filter((id) => id !== 'none') : null);
   if (plan.event === 'berry boom') colony.creator('berries');
   if (plan.event === 'storm') setRain(true);
   if (plan.event === 'great discovery') colony.awareness = Math.min(1, colony.awareness + 0.05);
@@ -267,7 +307,8 @@ async function endDay() {
   if (dayEnding) return;
   dayEnding = true;
   const finished = state.day;
-  const summary = { ...hiveSummary(), day: finished };
+  const summary = { ...hiveSummary(), day: finished, drama: state.dramaToday ?? [] };
+  state.dramaToday = [];
   colony.startDay(finished + 1, null);
   state.day = finished + 1;
   state.colony = colony.serialize();
@@ -281,7 +322,8 @@ async function endDay() {
   refreshBrainPill();
   state.diaryEntries.push({ day: finished, text, events: summary.events, population: summary.population, at: new Date().toISOString() });
   saveState(state);
-  lastCaption = `🍄 THE MYCEL · Day ${finished} · ${summary.population} Mycel\n${text}\n#themycel #mycel #indiedev`;
+  const hook = summary.drama.at(-1);
+  lastCaption = `🍄 THE MYCEL · Day ${finished} · ${summary.population} Mycel\n${hook ? `${hook}\n` : ''}${text}\n#themycel #mycel #indiedev`;
   ui.showDayCard(finished, text, `Mycel diary · ${summary.population} Mycel`);
   refreshSettingsPanel();
 }
@@ -298,6 +340,37 @@ const CREATOR_TEXT = {
   fire: 'The Watcher lit the fire.', beetles: 'The Watcher sent thorn beetles.', spores: 'The Watcher gifted spores.',
   knowledge: 'The Watcher dropped a page of knowledge.',
 };
+function pickMycel(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  const v = new THREE.Vector3();
+  let best = null, bd = 40 * 40;
+  for (const m of colony.mycel) {
+    v.set(m.x, m.y + 0.9, m.z).project(camera);
+    if (v.z > 1) continue;
+    const sx = r.left + (v.x * 0.5 + 0.5) * r.width, sy = r.top + (-v.y * 0.5 + 0.5) * r.height;
+    const d = (sx - cx) ** 2 + (sy - cy) ** 2;
+    if (d < bd) { bd = d; best = m; }
+  }
+  if (!best) { if (inspected) { inspected = null; ui.hideInspect(); document.getElementById('app').classList.remove('inspecting'); } return; }
+  inspected = best;
+  god.follow(best, Math.min(god.state.want.dist, 9));
+  refreshInspect();
+}
+let inspected = null;
+const TASK_TEXT = { gather: 'gathering', chop: 'chopping wood', eat: 'eating', rest: 'resting', sleep: 'sleeping', build: 'building', craft: 'crafting', lightFire: 'lighting the fire', feedFire: 'feeding the fire', explore: 'exploring', follow: 'following', flee: 'fleeing', defend: 'defending', spore: 'spreading spores', love: 'in love', scuffle: 'in a scuffle!', exiled: 'wandering the forest edge', huddle: 'whispering in the dark…', steal: 'sneaking around…', sabotage: 'up to something…', repair: 'repairing a hut' };
+function refreshInspect() {
+  const m = inspected;
+  if (!m || !colony.mycel.includes(m)) { inspected = null; ui.hideInspect(); return; }
+  document.getElementById('app').classList.add('inspecting');
+  const S = colony.social, f = S.factionOf(m);
+  ui.showInspect({
+    name: m.name, color: m.color, trait: m.trait, exiled: m.exiled,
+    faction: f?.name, leader: f?.leader === m.name,
+    friends: S.friendsOf(m).slice(0, 4).map((o) => o.name),
+    rivals: S.rivalsOf(m).slice(0, 4).map((o) => o.name),
+    doing: `Now: ${TASK_TEXT[m.task?.type] ?? 'thinking'}${m.injured > 0.15 ? ' · injured' : ''}`,
+  });
+}
 async function creatorAction(act, text) {
   unlockAudio();
   if (!started) ui.dismissTitle();
@@ -332,6 +405,18 @@ async function creatorAction(act, text) {
       audio.chirp('curious');
     }
     log(CREATOR_TEXT.knowledge);
+  } else if (act === 'reveal') {
+    const ok = colony.social.revealAny();
+    if (!ok) ui.toast('No secret plots right now.');
+    else log('The Watcher revealed a secret plot.');
+  } else if (act === 'rumor') {
+    const pair = colony.social.rumor();
+    if (!pair) ui.toast('Too few Mycel for gossip.');
+    else log(`The Watcher started a rumor between ${pair[0].name} and ${pair[1].name}.`);
+  } else if (act === 'gift') {
+    const f = colony.social.gift(text);
+    if (!f) ui.toast('No factions yet.');
+    else log(`The Watcher gave a gift to the ${f.name}.`);
   } else {
     colony.creator(act);
     if (act === 'fire') audio.knock();
@@ -368,7 +453,13 @@ function frame() {
   world.update(realDt * Math.max(speed, started ? 1 : 0.5), simTime, camera);
   mycelRenderer.setNightGlow(0.55 + (1 - daylight) * 0.9);
   visible.length = 0;
-  for (const m of colony.mycel) if (!m.hidden) visible.push(m);
+  const cp = camera.position, fol = god.state.follow;
+  for (const m of colony.mycel) {
+    if (m.hidden) continue;
+    // never let a Mycel fill the lens in close-ups
+    if (m !== fol && (m.x - cp.x) ** 2 + (m.z - cp.z) ** 2 < 2.6 && cp.y < 4) continue;
+    visible.push(m);
+  }
   mycelRenderer.update(visible, simTime, camera);
 
   if (raining) {
@@ -382,7 +473,13 @@ function frame() {
   }
 
   god.update(realDt, { focus: colony.focus(), spread: colony.spread(), heightAt: world.heightAt, portrait: W < H });
-  renderer.render(scene, camera);
+  const gs = god.state;
+  world.setShadowFocus(gs.target.x, gs.target.z, gs.dist * 0.75 + 6);
+  life.update(realDt, simTime, { daylight, fireLevel: world.fire.level, wind: raining ? 1.8 : 1 });
+  // fog follows zoom: crisp overview from far away, depth haze when close
+  scene.fog.near = 30 + gs.dist * 0.9; scene.fog.far = 110 + gs.dist * 1.8;
+  post.render();
+  quality.tick(realDt);
 
   uiTimer -= realDt;
   if (uiTimer <= 0) {
@@ -391,6 +488,7 @@ function frame() {
     const R = colony.resources;
     ui.setResources({ food: R.food, wood: R.wood, stone: R.stone, tools: colony.countTool('axe') + colony.countTool('spear') });
     ui.setStatus(`${timeLabel(colony.phase)} · ${colony.plan.goal}`);
+    if (inspected) refreshInspect();
   }
   moodTimer -= realDt;
   if (moodTimer <= 0 && audio.running) {
@@ -421,7 +519,9 @@ window.addEventListener('keydown', (e) => {
 
 // Debug / test hooks (console)
 window.mycel = {
-  get colony() { return colony; }, get state() { return state; }, world, god, audio, renderer,
+  get colony() { return colony; }, get state() { return state; }, world, god, audio, renderer, quality, post, life, lib,
+  inspect: (m) => { inspected = m; god.follow(m, 6); refreshInspect(); },
+  screenPos(m) { const r = canvas.getBoundingClientRect(); const v = new THREE.Vector3(m.x, m.y + 0.9, m.z).project(camera); return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height }; },
   setSpeed, startGame, creator: (act, text) => creatorAction(act, text),
   /** fast-forward N simulated seconds without rendering (tests) */
   skip(seconds) { const n = Math.ceil(seconds / 0.05); for (let i = 0; i < n; i++) { simulate(0.05); world.update(0.05, simTime, camera); } },

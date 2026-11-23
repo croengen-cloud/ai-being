@@ -20,6 +20,8 @@ export function init(h) {
     daycard: $('daycard'), daycardTitle: $('daycard-title'), daycardSub: $('daycard-sub'), daycardText: $('daycard-text'),
     toast: $('toast'), title: $('title-screen'),
   });
+  el.drama = $('drama'); el.inspect = $('inspect'); el.factionPick = $('faction-pick');
+  $('btn-inspect-close').addEventListener('click', () => { hideInspect(); h.onInspectClose?.(); });
   el.thoughtWho = el.thought.querySelector('.thought-who');
   el.thoughtText = el.thought.querySelector('.thought-text');
   el.bannerTitle = el.banner.querySelector('.banner-title');
@@ -46,6 +48,7 @@ export function init(h) {
   for (const b of document.querySelectorAll('[data-act]')) {
     b.addEventListener('click', () => {
       if (b.dataset.act === 'message') { el.messageForm.classList.remove('hidden'); el.messageInput.focus(); return; }
+      if (b.dataset.act === 'gift') { showFactionPicker(h.getFactions?.() ?? [], (id) => h.onCreator('gift', id)); return; }
       h.onCreator(b.dataset.act);
     });
   }
@@ -218,7 +221,7 @@ export function toggleSettings(force) {
 export function toggleCreator(force) {
   const open = force ?? el.creator.classList.contains('hidden');
   el.creator.classList.toggle('hidden', !open);
-  if (!open) el.messageForm.classList.add('hidden');
+  if (!open) { el.messageForm.classList.add('hidden'); el.factionPick?.classList.add('hidden'); }
   if (open) { el.diary.classList.add('hidden'); el.settings.classList.add('hidden'); }
   return open;
 }
@@ -276,4 +279,49 @@ export function renderDiary(state) {
     }
     el.diaryList.appendChild(sec);
   }
+}
+
+// ---------- Drama line (top priority news) ----------
+let dramaTimer = 0;
+export function showDrama(text, tag = 'DRAMA', ms = 5200) {
+  el.drama.textContent = '';
+  const t = document.createElement('span'); t.className = 'tag'; t.textContent = tag;
+  el.drama.append(t, document.createTextNode(text));
+  el.drama.classList.remove('visible'); void el.drama.offsetWidth; el.drama.classList.add('visible');
+  clearTimeout(dramaTimer);
+  dramaTimer = setTimeout(() => el.drama.classList.remove('visible'), ms);
+}
+
+// ---------- Inspect card ----------
+const hex = (c) => `#${(c >>> 0).toString(16).padStart(6, '0').slice(-6)}`;
+export function showInspect(info) {
+  const q = (s) => el.inspect.querySelector(s);
+  q('.ins-dot').style.background = hex(info.color);
+  q('.ins-name').textContent = info.name;
+  q('.ins-trait').textContent = info.trait;
+  q('.ins-faction').textContent = info.faction ? `${info.leader ? '👑 Leads' : 'Member of'} ${info.faction}` : (info.exiled ? 'Exiled to the forest edge' : 'No faction');
+  q('.ins-friends').textContent = info.friends.length ? `♥ Friends: ${info.friends.join(', ')}` : '';
+  q('.ins-rivals').textContent = info.rivals.length ? `⚡ Rivals: ${info.rivals.join(', ')}` : '';
+  q('.ins-doing').textContent = info.doing;
+  el.inspect.classList.remove('hidden');
+}
+export function hideInspect() { el.inspect.classList.add('hidden'); }
+export const inspectOpen = () => !el.inspect.classList.contains('hidden');
+
+// ---------- Faction picker (creator gift) ----------
+function showFactionPicker(factions, onPick) {
+  const row = el.factionPick.querySelector('.fp-row');
+  row.textContent = '';
+  if (!factions.length) {
+    const d = document.createElement('div'); d.textContent = 'No factions yet (they form at about 15 Mycel).';
+    row.append(d);
+  }
+  for (const f of factions) {
+    const b = document.createElement('button');
+    const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = hex(f.color);
+    b.append(sw, document.createTextNode(f.name));
+    b.addEventListener('click', () => { el.factionPick.classList.add('hidden'); onPick(f.id); });
+    row.append(b);
+  }
+  el.factionPick.classList.remove('hidden');
 }
