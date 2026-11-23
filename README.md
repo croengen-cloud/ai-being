@@ -51,6 +51,20 @@ at the park / shop). Stages unlock by learnings:
 | 20 | True Colours (cap colour follows its favourite place) |
 | 28 | Bloom |
 
+## Sound
+
+All audio is generated live with the Web Audio API (`audio.js`): no sound files, no samples, no music.
+
+- **Creatures:** soft chirps and coos; pitch and rhythm follow the emotion (curious, scared, excited, sad, thinking).
+- **Colony hum:** a whisper + formant-choir drone that thickens with the number of creatures (`audio.setColony(n)`).
+- **Ambient pad:** slow, dark A-minor drone that gets eerier with the day number and the colony's awareness
+  (`audio.setStory({ day, awareness })`): tritone, pitch drift, a thin high whine, sub rumble.
+- **Events:** `audio.outage()`, `audio.rain(on)`, `audio.build()`, `audio.watcher()` (distorted glitch tone).
+- **Settings → Sound:** volume, mute, and a sound test for the story features that are not in the game yet.
+- Sound starts on the first tap (browser / iPhone rule). On iPhone it plays as media (`navigator.audioSession`
+  plus a silent, generated audio element for older iOS), so the silent switch doesn't mute it and screen
+  recordings include it.
+
 ## Memory
 
 Saved in `localStorage` (`aiBeing.save.v1`). **Settings → Memory**: Export (JSON file),
@@ -84,6 +98,7 @@ The other texts were written for this project.
 | `main.js` | Boot, render loop, camera, day sequence |
 | `brain.js` | Gemini calls, validation, fallback thoughts, reading, diary |
 | `settings.js` | API key + model (device-local) |
+| `audio.js` | Procedural sound (Web Audio API) |
 | `memory.js` | Save state, growth stages, export / import |
 | `world.js` | The city |
 | `being.js` | The mushroom bot |

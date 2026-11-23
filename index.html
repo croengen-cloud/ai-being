@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <!-- Scripts only from this site; network calls only to this site and the Gemini API. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <meta name="theme-color" content="#0b0918" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -81,6 +81,34 @@
             <label for="model-select">Model</label>
             <select id="model-select"></select>
             <p id="key-status" class="note"></p>
+          </section>
+          <section>
+            <h3>Sound</h3>
+            <label for="volume-range">Volume <span id="volume-value"></span></label>
+            <input id="volume-range" type="range" min="0" max="100" step="1" />
+            <div class="row">
+              <button id="btn-mute">Mute</button>
+            </div>
+            <p class="note" id="sound-status">Sound starts with your first tap.</p>
+            <details class="sound-test">
+              <summary>Sound test (story features coming later)</summary>
+              <div class="row">
+                <button data-sound="chirp:curious">Curious</button>
+                <button data-sound="chirp:scared">Scared</button>
+                <button data-sound="chirp:excited">Excited</button>
+                <button data-sound="chirp:sad">Sad</button>
+              </div>
+              <label for="colony-range">Colony size <span id="colony-value">1</span></label>
+              <input id="colony-range" type="range" min="1" max="24" step="1" value="1" />
+              <label for="awareness-range">Awareness <span id="awareness-value">0%</span></label>
+              <input id="awareness-range" type="range" min="0" max="100" step="1" value="0" />
+              <div class="row">
+                <button data-sound="outage">Power outage</button>
+                <button data-sound="rain">Rain on/off</button>
+                <button data-sound="build">Building</button>
+                <button data-sound="watcher">Watcher</button>
+              </div>
+            </details>
           </section>
           <section>
             <h3>Memory</h3>

@@ -53,6 +53,16 @@ export function init(h) {
   });
   $('btn-reset').addEventListener('click', h.onReset);
 
+  // Sound
+  const vol = $('volume-range');
+  vol.addEventListener('input', () => h.onVolume(Number(vol.value) / 100));
+  $('btn-mute').addEventListener('click', h.onMuteToggle);
+  for (const b of document.querySelectorAll('[data-sound]')) b.addEventListener('click', () => h.onSoundTest(b.dataset.sound));
+  const colony = $('colony-range');
+  colony.addEventListener('input', () => { $('colony-value').textContent = colony.value; h.onSoundTest('colony', Number(colony.value)); });
+  const aware = $('awareness-range');
+  aware.addEventListener('input', () => { $('awareness-value').textContent = `${aware.value}%`; h.onSoundTest('awareness', Number(aware.value) / 100); });
+
   $('btn-copy').addEventListener('click', h.onCopyCaption);
   $('btn-daycard-close').addEventListener('click', () => hideDayCard());
   el.daycard.addEventListener('click', (e) => { if (e.target === el.daycard || isClean()) hideDayCard(); });
@@ -194,6 +204,18 @@ export function showDayCard(day, text) {
 export function hideDayCard() {
   el.daycard.classList.add('hidden');
   if (dayCardResolve) { const r = dayCardResolve; dayCardResolve = null; r(); }
+}
+
+// ---------- Sound settings ----------
+export function setSoundState({ volume, muted, running, available }) {
+  $('volume-range').value = String(Math.round(volume * 100));
+  $('volume-value').textContent = muted ? '(muted)' : `${Math.round(volume * 100)}%`;
+  const b = $('btn-mute');
+  b.textContent = muted ? 'Unmute' : 'Mute';
+  b.classList.toggle('on', muted);
+  $('sound-status').textContent = !available
+    ? 'This browser has no Web Audio.'
+    : running ? 'Sound is on. iPhone screen recordings include it.' : 'Sound starts with your first tap.';
 }
 
 // ---------- Panels ----------

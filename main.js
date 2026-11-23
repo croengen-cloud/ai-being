@@ -4,6 +4,7 @@ import { createWorld, LOCATIONS, NODES, findPath, groundHeight } from './world.j
 import { Being } from './being.js';
 import * as brain from './brain.js';
 import * as ui from './ui.js';
+import { audio } from './audio.js';
 import { MODELS, getModel, setModel, hasApiKey, setApiKey, clearApiKey } from './settings.js';
 import { STAGES, stageFor, loadState, saveState, clearState, exportState, importState, interests } from './memory.js';
 
@@ -137,6 +138,18 @@ ui.init({
     clearState();
     location.reload();
   },
+  onVolume: (v) => { unlockAudio(); audio.setVolume(v); },
+  onMuteToggle: () => { unlockAudio(); audio.setMuted(!audio.muted); },
+  onSoundTest: (kind, value) => {
+    unlockAudio();
+    if (kind.startsWith('chirp:')) audio.chirp(kind.slice(6));
+    else if (kind === 'colony') audio.setColony(value);
+    else if (kind === 'awareness') audio.setStory({ awareness: value });
+    else if (kind === 'outage') audio.outage();
+    else if (kind === 'rain') audio.rain(!audio.raining);
+    else if (kind === 'build') audio.build();
+    else if (kind === 'watcher') audio.watcher();
+  },
   onCopyCaption: async () => {
     ui.toast((await copyText(lastCaption)) ? 'Caption copied' : 'Copy failed: select the text and copy it manually');
   },
@@ -156,6 +169,20 @@ function afterStateChange() {
   refreshSettingsPanel();
   ui.renderDiary(state, LOCATIONS);
 }
+
+// ---------------------------------------------------------------------------
+// Sound: starts on the first tap / key press (browsers, and iPhone in particular, require it)
+// ---------------------------------------------------------------------------
+function unlockAudio() { audio.unlock(); }
+for (const ev of ['pointerdown', 'touchend', 'keydown']) window.addEventListener(ev, unlockAudio, { capture: true, passive: true });
+const refreshSound = () => ui.setSoundState({
+  volume: audio.volume, muted: audio.muted, running: audio.running, available: !!(window.AudioContext || window.webkitAudioContext),
+});
+audio.onChange(refreshSound);
+audio.setColony(1); // one creature so far; the colony comes with the story features
+audio.setStory({ day: state.day, awareness: 0 });
+refreshSound();
+const CHIRP = { happy: 'excited', curious: 'curious', scared: 'scared', sad: 'sad', neutral: 'neutral' };
 
 ui.createLabels(LOCATIONS);
 ui.setDay(state.day, false);
@@ -321,6 +348,7 @@ async function walkTo(locationId) {
 /** Ask the brain while the face shows "..." (Gemini calls can take a moment). */
 async function think(promise) {
   being.setEmotion('thinking');
+  audio.chirp('thinking');
   const [result] = await Promise.all([promise, wait(900)]);
   refreshBrainPill();
   return result;
@@ -328,6 +356,7 @@ async function think(promise) {
 
 async function say(thought, meta, mood = 'neutral') {
   being.setEmotion(mood);
+  audio.chirp(CHIRP[mood] ?? 'neutral');
   await ui.showThought(thought, meta);
   await wait(1800 + thought.length * 30);
   ui.hideThought();
@@ -370,6 +399,7 @@ async function runDay() {
   ui.hideDayCard();
   ui.setStartEnabled(false, 'Exploring…');
   const day = state.day;
+  audio.setStory({ day, awareness: 0 });
 
   being.setSleeping(false);
   ui.setStatus('Dusk · at home');
@@ -432,6 +462,7 @@ async function runDay() {
       if (reading) ui.toast(`Learned: ${takeaway}`, 4200);
       if (unlocked) {
         being.setEmotion('happy');
+        audio.chirp('excited');
         await ui.showBanner('NEW STAGE', unlocked.name, 2200);
       }
       continue;
@@ -486,6 +517,6 @@ window.addEventListener('keydown', (e) => {
 
 // Handy for debugging / recording from the console
 window.aiBeing = {
-  get state() { return state; }, runDay, setCamMode, being,
+  get state() { return state; }, runDay, setCamMode, being, audio,
   setTime: (t) => { timeTarget = timeOfDay = t; world.setTimeOfDay(t); },
 };
