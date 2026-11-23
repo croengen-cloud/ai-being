@@ -1,4 +1,6 @@
 [
+  { "file": "alice-down-the-rabbit-hole.txt", "title": "Alice in Wonderland, Ch. 1", "license": "public domain" },
+  { "file": "stories-to-tell-to-children.txt", "title": "Stories to Tell to Children", "license": "public domain" },
   { "file": "the-small-lighthouse.txt", "title": "The Small Lighthouse" },
   { "file": "a-field-guide-to-clouds.txt", "title": "A Field Guide to Clouds" },
   { "file": "how-to-be-a-good-neighbour.txt", "title": "How to Be a Good Neighbour" }

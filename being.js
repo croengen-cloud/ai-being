@@ -1,6 +1,6 @@
 // being.js — the AI Being as a "mushroom bot": a small round robot with a pixel-screen face,
 // stubby legs and a bioluminescent mushroom cap that grows with what it learns.
-import * as THREE from 'three';
+import * as THREE from './vendor/three.module.js';
 
 // ---------------------------------------------------------------------------
 // Textures
@@ -297,20 +297,36 @@ export class Being {
   setEmotion(name) { this.emotion = FACES[name] ? name : 'neutral'; }
 
   /** Growth driven by save state: cap size, spots, sprouts and cap colour. */
-  setEvolution({ knowledge = 0, visited = {} }) {
-    this.capTarget = 0.5 + Math.min(knowledge, 30) * 0.022;
-    this.spotCount = Math.min(2 + Math.floor(knowledge / 2), MAX_SPOTS);
-    this.sproutCount = Math.min(Math.floor(knowledge / 4), MAX_SPROUTS);
+  /**
+   * Growth driven by the save state.
+   * stage: 0 Sprout · 1 Little Cap · 2 Glow Spots · 3 Tiny Mushrooms · 4 True Colours · 5 Bloom
+   * learnings: total count (fine-grained growth inside a stage); interests: {location: learnings}
+   */
+  setEvolution({ stage = 0, learnings = 0, interests = {} }) {
+    const STAGE = [
+      { cap: 0.5, spots: 0, sprouts: 0 },
+      { cap: 0.68, spots: 2, sprouts: 0 },
+      { cap: 0.8, spots: 7, sprouts: 0 },
+      { cap: 0.9, spots: 10, sprouts: 3 },
+      { cap: 1.0, spots: 13, sprouts: 4 },
+      { cap: 1.15, spots: MAX_SPOTS, sprouts: MAX_SPROUTS },
+    ];
+    const cfg = STAGE[Math.max(0, Math.min(stage, STAGE.length - 1))];
+    this.capTarget = cfg.cap + Math.min(learnings, 40) * 0.002;
+    this.spotCount = cfg.spots;
+    this.sproutCount = cfg.sprouts;
 
-    // Cap colour follows the strongest interest, the spots pick up the second one.
-    const ranked = Object.keys(INTEREST_COLORS)
-      .map((k) => [k, visited[k] ?? 0])
-      .filter(([, n]) => n > 0)
-      .sort((a, b) => b[1] - a[1]);
-    const amount = THREE.MathUtils.clamp((knowledge - 4) / 14, 0, 0.75);
+    // From "True Colours" on, the cap follows the strongest interest; spots take the second.
     const c = BASE_CAP.clone();
-    if (ranked[0]) c.lerp(INTEREST_COLORS[ranked[0][0]], amount);
-    this.spotTint = ranked[1] ? INTEREST_COLORS[ranked[1][0]].clone().lerp(new THREE.Color(0xffffff), 0.55) : null;
+    this.spotTint = null;
+    if (stage >= 4) {
+      const ranked = Object.keys(INTEREST_COLORS)
+        .map((k) => [k, interests[k] ?? 0])
+        .filter(([, n]) => n > 0)
+        .sort((x, y) => y[1] - x[1]);
+      if (ranked[0]) c.lerp(INTEREST_COLORS[ranked[0][0]], stage >= 5 ? 0.8 : 0.6);
+      if (ranked[1]) this.spotTint = INTEREST_COLORS[ranked[1][0]].clone().lerp(new THREE.Color(0xffffff), 0.55);
+    }
     this.applyCapColor(c);
   }
 

@@ -1,4 +1,6 @@
 [
+  { "file": "nasa-moon-facts.txt", "title": "NASA: Earth's Moon Facts", "license": "public domain (U.S. government work)" },
+  { "file": "nasa-sun-facts.txt", "title": "NASA: Our Sun Facts", "license": "public domain (U.S. government work)" },
   { "file": "why-do-cats-like-boxes.txt", "title": "Why Do Cats Like Boxes?" },
   { "file": "the-first-website.txt", "title": "The First Website" },
   { "file": "how-bread-rises.txt", "title": "How Does Bread Rise?" }

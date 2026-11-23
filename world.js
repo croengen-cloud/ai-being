@@ -1,7 +1,7 @@
 // world.js — an empty early-2000s city at dusk: box buildings with window textures,
 // street lamps, traffic lights, crosswalks, neon signs, wires, fences, small trees.
 // Everything is generated in code (canvas textures + primitives), no asset files.
-import * as THREE from 'three';
+import * as THREE from './vendor/three.module.js';
 
 // ---------------------------------------------------------------------------
 // Navigation graph. Sidewalks run along z = ±6; crosswalks at x = ±6 and z = ±6.

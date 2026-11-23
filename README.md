@@ -1,55 +1,92 @@
-# AI Being — Phase 1
+# AI Being
 
-An empty early-2000s (PS2/Dreamcast-era) city at dusk, and a glowing AI being —
-the only living thing in it — that explores it day by day.
-Plain ES modules + Three.js from a CDN (import map), no build step.
+A tiny mushroom bot, the only living thing in an empty early-2000s city at dusk.
+Every in-game day it wakes up, walks to 3–4 places, reads books and articles,
+learns one thing at a time, grows, and writes a short diary entry.
 
-Look: box buildings with procedural window textures, street lamps, traffic lights,
-crosswalks, neon signs, wires and fences; purple-orange sky with a big moon, distance
-fog, low internal resolution (480p, 640p in 9:16) scaled up with hard pixels. No shadow
-maps or post-processing, so it stays light on normal hardware. The camera follows the
-being in third person (wide street shot when idle, behind it while walking, close-up when
-it thinks).
+Plain HTML + ES modules + Three.js (vendored in `vendor/`), no build step.
+Made for vertical (9:16) screen recordings, works in iPhone Safari.
 
-## Run
+## Run locally
 
 ```bash
-cd ai-being
 python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-A local server is required (ES modules and `fetch` of the txt files don't work over `file://`).
+A local server is required (ES modules and `fetch` do not work over `file://`).
+
+## The Gemini brain (optional)
+
+Open **Settings** and paste a Gemini API key (free tier, from Google AI Studio).
+
+- The key is stored **only in your browser** (`localStorage`, key `aiBeing.geminiKey`).
+  It is not in this repository, not in the memory export, and is only sent to
+  `generativelanguage.googleapis.com` (header `x-goog-api-key`).
+- Recommended: restrict the key in the Google Cloud console to HTTP referrers of the
+  site you host it on (e.g. `https://<user>.github.io/*`).
+- Without a key, or when Gemini fails (quota, timeout, bad answer), the being uses its
+  built-in thoughts. The game never waits forever (20 s timeout per call).
+- About 8–10 requests per in-game day.
+
+What Gemini does:
+
+| Call | Returns |
+| --- | --- |
+| `decideNextAction(state)` | `{ action, target, thought (≤15 words), emotion }` |
+| `read(location, state)` | one-sentence takeaway from an ~800-character chunk, stored as a learning |
+| `writeDiary(day)` | 2–3 sentence diary entry, shown at the end of the day with **Copy caption** |
+
+## Growth
+
+Every stop adds a learning (reading takeaways at the library / internet café, observations
+at the park / shop). Stages unlock by learnings:
+
+| Learnings | Stage |
+| --- | --- |
+| 0 | Sprout (tiny cap) |
+| 4 | Little Cap |
+| 8 | Glow Spots |
+| 14 | Tiny Mushrooms (sprouts on the shell) |
+| 20 | True Colours (cap colour follows its favourite place) |
+| 28 | Bloom |
+
+## Memory
+
+Saved in `localStorage` (`aiBeing.save.v1`). **Settings → Memory**: Export (JSON file),
+Import (with confirmation), Reset.
 
 ## Controls
 
-- **Start Day** / `Space`: the being wakes up, visits 3–4 places and goes home.
-- **9:16** / `V`: vertical canvas for TikTok recording (also `?vertical=1` in the URL).
-- `H`: hide the buttons for a clean recording.
-- **Diary** / `D`: everything it thought and read.
-- **Reset**: deletes the save (localStorage key `aiBeing.save.v1`).
+- **Start Day** / `Space`
+- **Hide UI** / `H`: only the DAY counter and thoughts stay. Tap the top-right corner to show the UI again.
+- **16:9 / 9:16** / `V` (9:16 is the default; on phones it fills the screen)
+- **Diary** / `D`
+
+## Reading material
+
+`library/` and `internet/` hold `.txt` files listed in each folder's `index.json`.
+A header block ending with a `---` line is skipped when reading.
+
+Public-domain samples:
+
+- Lewis Carroll, *Alice's Adventures in Wonderland*, Chapter I (1865)
+- Sara Cone Bryant, *Stories to Tell to Children* (1918), selection
+- NASA Science, *Earth's Moon: Facts* (excerpt, U.S. government work)
+- NASA Science, *Our Sun: Facts* (excerpt, U.S. government work)
+
+The other texts were written for this project.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `main.js` | Boot, render loop, third-person camera, save/load, day sequence |
-| `world.js` | City, buildings, street props, navigation graph, sky, fog, time of day (dusk → night) |
-| `being.js` | The mushroom bot: pixel-screen face (neutral, curious, happy, sad, scared, thinking, sleep), legs, glowing cap and its growth |
-| `brain.js` | `decideNextAction(state)` — scripted now, Ollama-ready for Phase 2 |
-| `ui.js` | Day counter, thought bubble, labels, banner, diary |
-| `library/`, `internet/` | Reading material (`index.json` lists the txt files) |
+| `main.js` | Boot, render loop, camera, day sequence |
+| `brain.js` | Gemini calls, validation, fallback thoughts, reading, diary |
+| `settings.js` | API key + model (device-local) |
+| `memory.js` | Save state, growth stages, export / import |
+| `world.js` | The city |
+| `being.js` | The mushroom bot |
+| `ui.js`, `style.css`, `index.html` | Overlay UI |
 
-## Growth
-
-The cap starts tiny on Day 1. Every place visited adds knowledge: the cap grows, gains
-glowing spots, and small mushrooms sprout from the shell. From ~5 visits on, the cap
-colour shifts towards the being's strongest interest (library violet, café cyan, park
-mint, shop pink); the spots take the second-strongest.
-
-## Phase 2 (prepared)
-
-`brain.js` has `BRAIN_CONFIG.mode`, `buildPrompt(state)` and a stub
-`decideWithOllama()` for `http://localhost:11434/api/generate`. Set the mode to
-`'ollama'` once that is implemented; failures fall back to the script.
-To add reading material, drop a `.txt` into `library/` or `internet/` and list it in `index.json`.
+Three.js is MIT licensed (`vendor/three.LICENSE`).
