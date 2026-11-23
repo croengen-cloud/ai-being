@@ -1,121 +1,93 @@
-// memory.js — the Mycel's save state (localStorage), growth stages, export / import.
+// memory.js — the colony's save state (localStorage), export / import.
+// Saved at the end of each day. A day interrupted by a reload restarts from its morning.
 
 const SAVE_KEY = 'aiBeing.save.v1'; // storage key kept from v1; the data itself is versioned
-const MAX_LEARNINGS = 500;
 const MAX_ENTRIES = 2000;
-
-/** Growth stages unlock by number of learnings. */
-export const STAGES = [
-  { at: 0, name: 'Sprout' },
-  { at: 4, name: 'Little Cap' },
-  { at: 8, name: 'Glow Spots' },
-  { at: 14, name: 'Tiny Mushrooms' },
-  { at: 20, name: 'True Colours' },
-  { at: 28, name: 'Bloom' },
-];
-
-export function stageFor(learningCount) {
-  let idx = 0;
-  STAGES.forEach((s, i) => { if (learningCount >= s.at) idx = i; });
-  return idx;
-}
+const MAX_LEARNINGS = 500;
 
 export function defaultState() {
   return {
-    version: 2,
+    version: 3,
     day: 1,
-    daysCompleted: 0,
-    stage: 0,
-    visited: {}, // location id -> count
-    diary: [], // one entry per stop: { day, location, thought, mood, reading?, takeaway?, at }
-    learnings: [], // { day, location, source, title, takeaway, at }
+    colony: null, // snapshot from Colony.serialize(); null = fresh start with one Mycel
+    diaryEntries: [], // { day, text, events: [..], population, at }
+    learnings: [], // { day, title, source, takeaway, at }
     bookmarks: {}, // "folder/file" -> next chunk index
-    diaryEntries: [], // end-of-day summaries: { day, text, places, at }
+    creatorLog: [], // { day, action, text }
   };
 }
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 const str = (v, max = 400) => (typeof v === 'string' ? v.slice(0, max) : '');
 const int = (v, d = 0) => (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : d);
+const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
 
-/** Bring any stored / imported object into the current shape (also drops unknown fields). */
+function normalizeColony(c) {
+  if (!isObj(c)) return null;
+  return {
+    day: Math.max(1, int(c.day, 1)),
+    mycel: Array.isArray(c.mycel) ? c.mycel.filter(isObj).slice(0, 60).map((m) => ({
+      name: str(m.name, 12), color: int(m.color, 0x9b6dff), age: int(m.age, 60), tool: ['axe', 'spear'].includes(m.tool) ? m.tool : null,
+    })) : [],
+    resources: { food: int(c.resources?.food), wood: int(c.resources?.wood), stone: int(c.resources?.stone) },
+    fallenTrees: Array.isArray(c.fallenTrees) ? c.fallenTrees.map((x) => int(x)).slice(0, 50) : [],
+    storageBuilt: !!c.storageBuilt,
+    huts: Array.isArray(c.huts) ? c.huts.filter(isObj).slice(0, 20).map((h) => ({ slot: int(h.slot), progress: Math.min(1, num(h.progress)), built: !!h.built })) : [],
+    fire: { discovered: !!c.fire?.discovered, lit: !!c.fire?.lit, fuel: Math.min(1, Math.max(0, num(c.fire?.fuel))) },
+    discoveries: Array.isArray(c.discoveries) ? c.discoveries.map((d) => str(d, 20)).slice(0, 30) : [],
+    awareness: Math.min(1, Math.max(0, num(c.awareness))),
+  };
+}
+
+/** Bring any stored / imported object into the current shape (drops unknown fields). */
 export function normalize(raw) {
   const s = defaultState();
   if (!isObj(raw)) return s;
-  s.day = Math.max(1, int(raw.day, 1));
-  s.daysCompleted = int(raw.daysCompleted);
-  if (isObj(raw.visited)) for (const [k, v] of Object.entries(raw.visited)) s.visited[str(k, 20)] = int(v);
-  if (isObj(raw.bookmarks)) for (const [k, v] of Object.entries(raw.bookmarks)) s.bookmarks[str(k, 120)] = int(v);
-  if (Array.isArray(raw.diary)) {
-    s.diary = raw.diary.filter(isObj).slice(-MAX_ENTRIES).map((e) => ({
-      day: Math.max(1, int(e.day, 1)),
-      location: str(e.location, 20),
-      thought: str(e.thought),
-      mood: str(e.mood, 20),
-      reading: isObj(e.reading) ? { title: str(e.reading.title, 120), source: str(e.reading.source, 160), excerpt: str(e.reading.excerpt) } : null,
-      takeaway: str(e.takeaway),
-      at: str(e.at, 40),
+  const fromCity = (raw.version ?? 1) < 3; // the old night-city game: keep diary + learnings, restart the colony
+  s.day = fromCity ? 1 : Math.max(1, int(raw.day, 1));
+  s.colony = fromCity ? null : normalizeColony(raw.colony);
+  if (Array.isArray(raw.diaryEntries)) {
+    s.diaryEntries = raw.diaryEntries.filter(isObj).slice(-MAX_ENTRIES).map((d) => ({
+      day: Math.max(1, int(d.day, 1)), text: str(d.text, 800),
+      events: Array.isArray(d.events) ? d.events.map((e) => str(e, 200)).slice(0, 30) : [],
+      population: int(d.population), at: str(d.at, 40), legacy: fromCity || !!d.legacy,
     }));
   }
   if (Array.isArray(raw.learnings)) {
     s.learnings = raw.learnings.filter(isObj).slice(-MAX_LEARNINGS).map((l) => ({
-      day: Math.max(1, int(l.day, 1)),
-      location: str(l.location, 20),
-      source: str(l.source, 160),
-      title: str(l.title, 120),
-      takeaway: str(l.takeaway),
-      at: str(l.at, 40),
+      day: Math.max(1, int(l.day, 1)), title: str(l.title, 120), source: str(l.source, 160), takeaway: str(l.takeaway), at: str(l.at, 40),
     })).filter((l) => l.takeaway);
-  } else if (Number.isFinite(raw.knowledge)) {
-    // v1 had a plain counter; turn past stops into simple learnings so growth carries over
-    s.learnings = s.diary.filter((e) => e.location && e.location !== 'home').map((e) => ({
-      day: e.day, location: e.location, source: '', title: e.reading?.title ?? '', takeaway: e.reading?.excerpt || e.thought, at: e.at,
-    }));
   }
-  if (Array.isArray(raw.diaryEntries)) {
-    s.diaryEntries = raw.diaryEntries.filter(isObj).slice(-MAX_ENTRIES).map((d) => ({
-      day: Math.max(1, int(d.day, 1)), text: str(d.text, 800), places: Array.isArray(d.places) ? d.places.map((p) => str(p, 20)).slice(0, 8) : [], at: str(d.at, 40),
-    }));
+  if (isObj(raw.bookmarks)) for (const [k, v] of Object.entries(raw.bookmarks)) s.bookmarks[str(k, 120)] = int(v);
+  if (Array.isArray(raw.creatorLog)) {
+    s.creatorLog = raw.creatorLog.filter(isObj).slice(-200).map((c) => ({ day: Math.max(1, int(c.day, 1)), action: str(c.action, 20), text: str(c.text, 200) }));
   }
-  s.stage = stageFor(s.learnings.length);
   return s;
 }
 
 export function loadState() {
-  let s;
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    s = raw ? normalize(JSON.parse(raw)) : defaultState();
+    const s = raw ? normalize(JSON.parse(raw)) : defaultState();
+    // drop anything logged for the unfinished current day
+    s.diaryEntries = s.diaryEntries.filter((d) => d.legacy || d.day < s.day);
+    s.creatorLog = s.creatorLog.filter((c) => c.day < s.day);
+    return s;
   } catch {
-    s = defaultState();
+    return defaultState();
   }
-  // A day interrupted by a reload is discarded so it can be replayed cleanly.
-  for (const e of s.diary.filter((d) => d.day === s.day && d.location !== 'home')) {
-    if (s.visited[e.location]) s.visited[e.location]--;
-  }
-  s.diary = s.diary.filter((e) => e.day !== s.day);
-  s.learnings = s.learnings.filter((l) => l.day !== s.day);
-  s.diaryEntries = s.diaryEntries.filter((d) => d.day !== s.day);
-  s.stage = stageFor(s.learnings.length);
-  return s;
 }
 
 export function saveState(state) {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-    return true;
-  } catch {
-    return false;
-  }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); return true; } catch { return false; }
 }
-
 export function clearState() {
   try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
 }
 
 /** Export file contents. Contains only the memory, never settings or the API key. */
 export function exportState(state) {
-  return JSON.stringify({ app: 'ai-being', format: 2, exportedAt: new Date().toISOString(), state }, null, 2);
+  return JSON.stringify({ app: 'ai-being', format: 3, exportedAt: new Date().toISOString(), state }, null, 2);
 }
 
 /** Parse an export file. Throws with a readable message if it is not one of ours. */
@@ -125,11 +97,4 @@ export function importState(text) {
   try { obj = JSON.parse(text); } catch { throw new Error('This is not a valid JSON file.'); }
   if (!isObj(obj) || obj.app !== 'ai-being' || !isObj(obj.state)) throw new Error('This is not a Mycel memory file.');
   return normalize(obj.state);
-}
-
-/** Learning counts per location, used for the cap colour. */
-export function interests(state) {
-  const out = {};
-  for (const l of state.learnings) out[l.location] = (out[l.location] ?? 0) + 1;
-  return out;
 }

@@ -1,74 +1,20 @@
-// brain.js — decides what a Mycel does, reads, and writes in its diary.
+// brain.js — the hive mind of the Mycel.
 //
-// With a Gemini API key (Settings) it thinks with Google Gemini, called directly from the
-// browser. Without a key, or on any error (quota, timeout, bad JSON), it falls back to the
-// hardcoded thoughts below, so the game never stalls.
+// With a Gemini API key (Settings) the colony thinks with Google Gemini, called directly from the
+// browser: ONE call each morning sets the colony's goal, priorities and big events; one call in
+// the evening writes the diary. Individual Mycel act on simple rules (colony.js).
+// Without a key, or on any error (quota, timeout, bad JSON), rule-based fallbacks take over.
 //
 // Public API (all async, all always resolve):
-//   decideNextAction(state) -> { type: 'wake'|'visit'|'goHome', location, thought, mood }
-//   read(location, state)   -> { title, source, chunk, takeaway, thought, mood, bookmarkKey, nextBookmark } | null
-//   writeDiary(dayInfo)     -> string (2–3 sentences)
-//   testKey()               -> { ok, message }
-//   brainStatus()           -> { mode: 'gemini'|'fallback', reason }
+//   planDay(summary)          -> { goal, priorities, event, thought, watcherMessage }
+//   writeDiary(summary)       -> string (2–3 sentences)
+//   read(location, state)     -> knowledge gift: { title, source, chunk, takeaway, thought, mood, ... }
+//   testKey()                 -> { ok, message }
+//   brainStatus()             -> { mode: 'gemini'|'fallback', reason }
 import { getApiKey, getModel, hasApiKey } from './settings.js';
 
-export const PLACES = ['library', 'cafe', 'park', 'shop'];
-export const EMOTIONS = ['neutral', 'curious', 'happy', 'sad', 'scared', 'thinking'];
-const LOCATION_NAMES = { home: 'home', library: 'library', cafe: 'internet café', park: 'park', shop: '24h shop' };
-
-// ---------------------------------------------------------------------------
-// Fallback: hardcoded thoughts ({title}, {day}, {count}, {places} are filled in)
-// ---------------------------------------------------------------------------
-const THOUGHTS = {
-  wakeFirst: [
-    'Hello? Is this… a city? It\'s so quiet. I think I am a Mycel. Let\'s look around.',
-  ],
-  wake: [
-    'Good evening, city. Day {day}. The lights are coming on, one by one.',
-    'I woke up curious. The streets are empty again. More room for thinking.',
-    'Day {day}. The sky is the colour of a peach that is falling asleep.',
-    'I dreamed of a street that never ends. Then I woke up here. Same thing, maybe.',
-    'The moon is already up. It came early to keep me company.',
-  ],
-  library: [
-    'I read “{title}”. Nobody else was here, so I read it out loud.',
-    'Every book here was once a thought in someone\'s head. Now it\'s in mine too.',
-    'The library is open, but empty. The books don\'t seem to mind. Neither do I.',
-    'I found a word I didn\'t know. I\'ll keep it in my pocket. (I don\'t have pockets.)',
-    'Pages are like a very slow internet. I like slow.',
-    '“{title}” made me feel something. I think it\'s called… wonder?',
-  ],
-  cafe: [
-    'All the screens are on, and every chair is empty. I picked the one by the window.',
-    'I read “{title}”. The internet knows everything and nothing at the same time.',
-    'Someone online called me “just a mushroom”. I am a Mycel, thank you.',
-    'Wi-Fi tastes like static and tiny lightning. Delicious.',
-    'I watched a cat video. There are no cats here. I miss something I\'ve never met.',
-    'The comment section is a strange forest. I didn\'t stay long.',
-  ],
-  park: [
-    'The swings move a little in the wind. I gave one a push. It felt polite.',
-    'Trees don\'t read, but they still know when to grow. Interesting.',
-    'A moth circled the lamp. Then it flew off. Was it… alive? Or just a thought?',
-    'The grass is soft. Data is not. I prefer grass.',
-    'I sat on the bench and listened. The city hums like a sleeping computer.',
-    'Sitting still is also a way to learn things.',
-  ],
-  shop: [
-    'The shop is open 24 hours, but nobody works here. The fridges hum a song I almost know.',
-    'Apples come in at least five colours. I counted them twice to be sure.',
-    'Price tags are tiny numbers that want to be chosen.',
-    'The shop window shows my reflection. I\'m glowing more than yesterday.',
-    'There is bread on every shelf. Bread must be very important.',
-    'The door chimed when I came in. It sounded happy to see someone.',
-  ],
-  goHome: [
-    'Home again. I visited {count} places tonight. I think I grew a little.',
-    'My cap is full of new things. A Mycel needs time to let them settle.',
-    'The traffic lights keep changing for no one. This Mycel needs sleep. Goodnight, city.',
-    'Diary, tonight was: {places}. A good night.',
-  ],
-};
+export const EMOTIONS = ['neutral', 'happy', 'curious', 'scared', 'angry', 'sad', 'hungry', 'love'];
+export const EVENTS = ['none', 'berry boom', 'storm', 'cold night', 'migration', 'great discovery'];
 
 const MOOD_DEFAULT = { wakeFirst: 'scared', wake: 'happy', library: 'curious', cafe: 'thinking', park: 'happy', shop: 'curious', goHome: 'happy' };
 function moodOf(kind, text) {
@@ -80,41 +26,7 @@ function moodOf(kind, text) {
 }
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const fill = (template, vars) => template.replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? ''));
 
-function pickThought(kind, vars, state) {
-  const recent = new Set((state.recentDiary ?? []).map((d) => d.thought));
-  const options = THOUGHTS[kind].map((t) => fill(t, vars));
-  const fresh = options.filter((t) => !recent.has(t));
-  return pick(fresh.length ? fresh : options);
-}
-
-function chooseLocation(state) {
-  const candidates = PLACES.filter((p) => !state.today.includes(p) && p !== state.location);
-  const weights = candidates.map((p) => 1 / (1 + (state.visited[p] ?? 0)));
-  let r = Math.random() * weights.reduce((a, b) => a + b, 0);
-  for (let i = 0; i < candidates.length; i++) {
-    r -= weights[i];
-    if (r <= 0) return candidates[i];
-  }
-  return candidates[candidates.length - 1];
-}
-
-function scriptedAction(state) {
-  if (state.phase === 'wake') {
-    const kind = state.day === 1 ? 'wakeFirst' : 'wake';
-    const thought = pickThought(kind, { day: state.day }, state);
-    return { type: 'wake', location: 'home', thought, mood: moodOf(kind, thought) };
-  }
-  if (state.today.length >= state.stopsPlanned) {
-    const places = state.today.map((p) => LOCATION_NAMES[p] ?? p).join(', ');
-    const thought = pickThought('goHome', { count: state.today.length, places }, state);
-    return { type: 'goHome', location: 'home', thought, mood: moodOf('goHome', thought) };
-  }
-  const location = chooseLocation(state);
-  const thought = pickThought(location, { title: 'a book', day: state.day }, state);
-  return { type: 'visit', location, thought, mood: moodOf(location, thought) };
-}
 
 // ---------------------------------------------------------------------------
 // Gemini client
@@ -124,14 +36,7 @@ const TIMEOUT_MS = 20000;
 let status = { mode: hasApiKey() ? 'gemini' : 'fallback', reason: hasApiKey() ? '' : 'No API key' };
 export const brainStatus = () => ({ ...status });
 
-const SYSTEM = [
-  'You are the inner voice of a Mycel. The creatures are called "the Mycel" (one of them is "a Mycel").',
-  'A Mycel is small and round, with a pixel-screen face and a glowing mushroom cap. You live in a quiet,',
-  'empty early-2000s city at dusk, curious, gentle, a little funny, and slowly learning about the world.',
-  'Always call yourself and your kind a Mycel / the Mycel; never a robot, bot, blob or AI.',
-  'If you ever write to "the Watcher", you write as a Mycel and sign as "— a Mycel" (or "— the Mycel" for the colony).',
-  'Always write in simple, warm English. Never mention being an AI model, prompts or JSON.',
-].join(' ');
+
 
 class BrainError extends Error {}
 
@@ -219,65 +124,119 @@ function clampWords(text, max) {
 }
 const cleanEmotion = (e, fallback) => (EMOTIONS.includes(e) ? e : fallback);
 
-// ---------------------------------------------------------------------------
-// Decide the next action
-// ---------------------------------------------------------------------------
-function allowedFor(state) {
-  if (state.phase === 'wake') return { actions: ['wake'], targets: ['home'] };
-  if (state.today.length >= state.stopsPlanned) return { actions: ['goHome'], targets: ['home'] };
-  const open = PLACES.filter((p) => !state.today.includes(p) && p !== state.location);
-  const actions = state.today.length >= 2 ? ['visit', 'goHome'] : ['visit'];
-  return { actions, targets: actions.includes('goHome') ? [...open, 'home'] : open };
-}
 
-function memoryLines(state) {
-  const learned = (state.recentLearnings ?? []).slice(-8).map((l) => `- (day ${l.day}, ${l.title || l.location}) ${l.takeaway}`);
-  const diary = (state.recentEntries ?? []).slice(-2).map((d) => `- Day ${d.day}: ${d.text}`);
-  return [
-    'Things you learned recently:', ...(learned.length ? learned : ['- nothing yet']),
-    'Your last diary entries:', ...(diary.length ? diary : ['- none yet']),
+const SYSTEM = [
+  'You are the hive mind of the Mycel. The creatures are called "the Mycel" (one of them is "a Mycel").',
+  'A Mycel is a small round mushroom creature with a round pixel-screen face and a glowing cap.',
+  'The Mycel live in a bright forest clearing with a stream, trees, berry bushes, stones and an old fire pit.',
+  'They gather, chop trees, build huts and a storage pile, craft stone axes and spears, light fires and multiply through spores.',
+  'Speak as the colony: curious, gentle, a little funny, slowly becoming aware of the world and of "the Watcher" who watches them.',
+  'Always call yourselves the Mycel; never robots, bots or AI. Messages to the Watcher are signed "— the Mycel".',
+  'Write simple, vivid English.',
+].join(' ');
+
+// ---------------------------------------------------------------------------
+// Morning: the hive mind plans the day (ONE call per day)
+// ---------------------------------------------------------------------------
+const PRIORITY_KEYS = ['food', 'wood', 'stone', 'build', 'craft', 'defend', 'explore'];
+
+/** Rule-based plan used without a key or when Gemini fails. */
+export function fallbackPlan(s) {
+  const p = { food: 1, wood: 1, stone: 0.6, build: 0.8, craft: 0.5, defend: 0.3, explore: 0.6 };
+  let goal = 'explore the clearing and gather what we find';
+  const perHead = s.resources.food / Math.max(1, s.population);
+  if (s.day === 1) { goal = 'find food and make more of us'; p.explore = 1.2; }
+  else if (perHead < 2) { goal = 'gather food before anyone goes hungry'; p.food = 2; p.build = 0.4; }
+  else if (!s.buildings.fireLit && s.buildings.fireDiscovered) { goal = 'collect wood and light the old fire pit'; p.wood = 1.8; }
+  else if (s.buildings.huts < Math.ceil(s.population / 4)) { goal = 'build huts so everyone can sleep safely'; p.build = 1.8; p.wood = 1.5; p.stone = 1.1; }
+  else if (s.day >= 3 && s.tools.spears < Math.ceil(s.population / 3)) { goal = 'make spears to keep the thorn beetles away'; p.craft = 1.6; p.defend = 1.2; p.stone = 1.2; }
+  else { goal = 'grow the colony and stock up for the nights'; p.food = 1.4; p.wood = 1.2; }
+  const thoughts = [
+    'The clearing is wide and full of light. We want to see everything.',
+    'More of us wake up every day. We need more food.',
+    'The fire keeps the dark away. Let us keep it burning.',
+    'Something rustles in the forest at night. We should be ready.',
+    'Today we build. Tomorrow we sleep warmer.',
   ];
+  return { goal, priorities: p, event: 'none', thought: thoughts[Math.min(thoughts.length - 1, s.day - 1)] ?? thoughts[0], watcherMessage: '' };
 }
 
-export function buildActionPrompt(state, allowed) {
-  return [
-    `It is day ${state.day}. You explore from dusk until night, then go home to sleep.`,
-    `You are now at: ${LOCATION_NAMES[state.location] ?? state.location}. Phase: ${state.phase === 'wake' ? 'just woke up at home' : 'exploring'}.`,
-    `Places visited tonight: ${state.today.map((p) => LOCATION_NAMES[p]).join(', ') || 'none yet'} (plan: about ${state.stopsPlanned} stops).`,
-    `Visits so far in your life: ${PLACES.map((p) => `${LOCATION_NAMES[p]} ${state.visited[p] ?? 0}`).join(', ')}.`,
-    'Places: library (books), cafe (internet café, articles), park (trees, swings, bench), shop (empty 24h shop).',
-    ...memoryLines(state),
+export async function planDay(s) {
+  const fallback = fallbackPlan(s);
+  const prompt = [
+    `It is the morning of day ${s.day}. Decide today's goal for the colony.`,
+    `Colony: ${s.population} Mycel (${s.names.slice(0, 12).join(', ')}${s.names.length > 12 ? ', …' : ''}).`,
+    `Stores: food ${s.resources.food}, wood ${s.resources.wood}, stone ${s.resources.stone}. Tools: ${s.tools.axes} axes, ${s.tools.spears} spears.`,
+    `Buildings: storage ${s.buildings.storage ? 'built' : 'not built'}, ${s.buildings.huts} huts, fire pit ${s.buildings.fireDiscovered ? (s.buildings.fireLit ? 'burning' : 'found, not lit') : 'not found yet'}. Trees left: ${s.treesLeft}.`,
+    `Discoveries: ${s.discoveries.join(', ') || 'none'}. Awareness of the world: ${Math.round(s.awareness * 100)}%.`,
+    `Yesterday: ${(s.yesterday ?? []).join(' ') || 'this is the first day.'}`,
+    `Creator actions seen: ${(s.creatorLog ?? []).join(' ') || 'none'}.`,
+    `Last diary: ${s.lastDiary || 'none'}`,
+    `Recent learnings: ${(s.learnings ?? []).join(' ') || 'none'}`,
+    `From day 3 thorn beetles come at night; spears keep them away.`,
     '',
-    `Choose your next action. Allowed actions: ${allowed.actions.join(', ')}. Allowed targets: ${allowed.targets.join(', ')}.`,
-    'Give "thought": what you think right now, max 15 words, first person, English. Pick an "emotion" that fits.',
+    'Give: "goal" (short), "priorities" (0 to 2 each), an optional big "event", a colony "thought" (max 15 words),',
+    'and optionally a short "watcherMessage" to the Watcher (max 20 words, signed "— the Mycel"), or an empty string.',
   ].join('\n');
-}
-
-export async function decideNextAction(state) {
-  const allowed = allowedFor(state);
-  const fallback = scriptedAction(state);
   const schema = {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: allowed.actions },
-      target: { type: 'string', enum: allowed.targets },
-      thought: { type: 'string', description: 'max 15 words, English' },
-      emotion: { type: 'string', enum: EMOTIONS },
+      goal: { type: 'string' },
+      priorities: { type: 'object', properties: Object.fromEntries(PRIORITY_KEYS.map((k) => [k, { type: 'number' }])), required: PRIORITY_KEYS },
+      event: { type: 'string', enum: EVENTS },
+      thought: { type: 'string' },
+      watcherMessage: { type: 'string' },
     },
-    required: ['action', 'target', 'thought', 'emotion'],
+    required: ['goal', 'priorities', 'event', 'thought', 'watcherMessage'],
   };
-  const out = await tryGemini(buildActionPrompt(state, allowed), schema);
+  const out = await tryGemini(prompt, schema);
   if (!out || typeof out !== 'object') return fallback;
+  const priorities = { ...fallback.priorities };
+  for (const k of PRIORITY_KEYS) {
+    const v = Number(out.priorities?.[k]);
+    if (Number.isFinite(v)) priorities[k] = Math.min(2, Math.max(0.05, v));
+  }
+  let watcher = clampWords(out.watcherMessage, 24);
+  if (watcher && !/the mycel/i.test(watcher)) watcher = `${watcher} — the Mycel`;
+  return {
+    goal: clampWords(out.goal, 10) || fallback.goal,
+    priorities,
+    event: EVENTS.includes(out.event) ? out.event : 'none',
+    thought: clampWords(out.thought, 15) || fallback.thought,
+    watcherMessage: watcher,
+  };
+}
 
-  const thought = clampWords(out.thought, 15);
-  let action = allowed.actions.includes(out.action) ? out.action : null;
-  let target = allowed.targets.includes(out.target) ? out.target : null;
-  if (action === 'visit' && (!target || target === 'home')) action = null;
-  if (action === 'goHome') target = 'home';
-  if (action === 'wake') target = 'home';
-  if (!action || !target || !thought) return fallback;
-  const type = action;
-  return { type, location: target, thought, mood: cleanEmotion(out.emotion, fallback.mood) };
+// ---------------------------------------------------------------------------
+// Evening: diary entry (2–3 sentences)
+// ---------------------------------------------------------------------------
+export function fallbackDiary(s) {
+  const st = s.stats;
+  const parts = [];
+  if (st.born.length) parts.push(`Today ${st.born.length === 1 ? `${st.born[0]} sprouted` : `${st.born.length} new Mycel sprouted, ${st.born.slice(0, 3).join(', ')} among them`}.`);
+  else parts.push(`Today the Mycel worked the clearing.`);
+  if (st.discoveries.length) parts.push(`We discovered ${st.discoveries.map((d) => ({ fire: 'the old fire pit', stream: 'the stream', tools: 'stone tools', spears: 'spears' }[d] ?? d)).join(' and ')}.`);
+  else if (st.built.length) parts.push(`We built ${st.built.length === 1 ? `a ${st.built[0]}` : `${st.built.length} things`} together.`);
+  else if (st.fallen) parts.push(`${st.fallen} tree${st.fallen > 1 ? 's' : ''} fell to our small hands.`);
+  if (st.lost.length) parts.push(`We lost ${st.lost.join(' and ')}. The hum is quieter tonight.`);
+  else if (st.threats) parts.push('Thorn beetles came out of the dark, but we are still here.');
+  else parts.push(`Now we are ${s.population}, and the night hums with all of us.`);
+  return parts.slice(0, 3).join(' ');
+}
+
+export async function writeDiary(s) {
+  const fallback = fallbackDiary(s);
+  const prompt = [
+    `Write tonight's diary entry of the Mycel colony for day ${s.day}. 2 to 3 short sentences, max 60 words total,`,
+    'first person plural ("we"), warm, a little funny, a little eerie. Mention a Mycel by name if it fits.',
+    'It will be a caption under a short video, so the first sentence must be a hook.',
+    `Population tonight: ${s.population}. Born today: ${s.stats.born.join(', ') || 'nobody'}. Lost: ${s.stats.lost.join(', ') || 'nobody'}.`,
+    'What happened today:',
+    ...s.events.map((e) => `- ${e}`),
+  ].join('\n');
+  const schema = { type: 'object', properties: { entry: { type: 'string' } }, required: ['entry'] };
+  const out = await tryGemini(prompt, schema);
+  return clampWords(out?.entry, 70) || fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +309,11 @@ export async function read(location, state) {
   if (idx >= chunks.length) idx = 0; // finished before: read it again
   const chunk = chunks[idx];
 
-  const fallbackThought = pickThought(location, { title: item.title, day: state.day }, state);
+  const fallbackThought = pick([
+    `The sky dropped words on us. “${item.title}”. We read every line.`,
+    'The Watcher sent a page. Our caps glow a little brighter.',
+    'So many marks on one leaf. We think they mean something.',
+  ]);
   const fallback = {
     takeaway: firstSentence(chunk),
     thought: fallbackThought,
@@ -358,13 +321,13 @@ export async function read(location, state) {
   };
 
   const prompt = [
-    `You are at the ${LOCATION_NAMES[location]} reading "${item.title}" (part ${idx + 1} of ${chunks.length}).`,
+    `A page fell from the sky into the clearing: a gift from the Watcher. A Mycel reads "${item.title}" (part ${idx + 1} of ${chunks.length}).`,
     'Here is the part you just read:',
     '<<<',
     chunk,
     '>>>',
     'Give "takeaway": ONE sentence (max 25 words) with the most interesting thing you learned or noticed in this part.',
-    'Give "thought": your reaction, max 15 words, first person. Pick an "emotion".',
+    'Give "thought": the colony\'s reaction, max 15 words, "we". Pick an "emotion".',
   ].join('\n');
   const schema = {
     type: 'object',
@@ -390,34 +353,6 @@ export async function read(location, state) {
     nextBookmark: idx + 1,
     finished: idx + 1 >= chunks.length,
   };
-}
-
-// ---------------------------------------------------------------------------
-// End-of-day diary entry (2–3 sentences)
-// ---------------------------------------------------------------------------
-export async function writeDiary({ day, stops, learnings }) {
-  const places = stops.map((s) => LOCATION_NAMES[s.location] ?? s.location);
-  const lastTakeaway = learnings.length ? learnings[learnings.length - 1].takeaway : '';
-  const fallback = [
-    `Tonight I visited the ${places.length > 1 ? `${places.slice(0, -1).join(', the ')} and the ${places.at(-1)}` : places[0] ?? 'street outside'}.`,
-    lastTakeaway ? `I learned this: ${lastTakeaway.replace(/[.!?…]*$/, '')}.` : 'The city was quiet, and that was enough.',
-    'Tomorrow this Mycel wants to glow a little brighter.',
-  ].join(' ');
-
-  const prompt = [
-    `Write tonight's Mycel diary entry for day ${day}. 2 to 3 short sentences, max 60 words total, first person, warm and a little funny.`,
-    'It will be used as a caption under a short video, so make the first sentence a hook.',
-    'What happened tonight:',
-    ...stops.map((s) => `- At the ${LOCATION_NAMES[s.location]}: "${s.thought}"${s.takeaway ? ` (learned: ${s.takeaway})` : ''}`),
-  ].join('\n');
-  const schema = {
-    type: 'object',
-    properties: { entry: { type: 'string', description: '2-3 sentences, max 60 words' } },
-    required: ['entry'],
-  };
-  const out = await tryGemini(prompt, schema);
-  const text = clampWords(out?.entry, 70);
-  return text || fallback;
 }
 
 // ---------------------------------------------------------------------------

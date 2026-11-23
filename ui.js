@@ -1,32 +1,65 @@
-// ui.js — HTML overlay: day counter, status, thought bubble, labels, banner, diary,
-// settings panel, end-of-day card, toast and the "Hide UI" recording mode.
+// ui.js — HTML overlay: counters, status, stores, colony thoughts, event feed, banner,
+// creator sheet, diary + settings panels, end-of-day card, title screen, Hide UI.
 // All dynamic text is set with textContent (never innerHTML).
+import { iconDataUrl } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {};
-const labels = {};
-let typeToken = 0;
 
 export function init(h) {
   Object.assign(el, {
     app: $('app'), stage: $('stage'),
-    dayCounter: $('day-counter'), dayNum: $('day-num'), status: $('status'),
-    brainPill: $('brain-pill'), brainLabel: $('brain-label'),
-    bubble: $('bubble'), labels: $('labels'), banner: $('banner'),
-    start: $('btn-start'), vertical: $('btn-vertical'),
+    dayCounter: $('day-counter'), dayNum: $('day-num'), colonyCounter: $('colony-counter'), colonyNum: $('colony-num'),
+    status: $('status'), brainPill: $('brain-pill'), brainLabel: $('brain-label'), resBar: $('res-bar'),
+    thought: $('thought'), feed: $('feed'), banner: $('banner'),
+    vertical: $('btn-vertical'), speed: $('btn-speed'), autocam: $('btn-autocam'),
+    creator: $('creator'), messageForm: $('message-form'), messageInput: $('message-input'),
     diary: $('diary'), diaryList: $('diary-list'),
     settings: $('settings'), keyInput: $('key-input'), keyStatus: $('key-status'),
     modelSelect: $('model-select'), memorySummary: $('memory-summary'), importFile: $('import-file'),
-    daycard: $('daycard'), daycardTitle: $('daycard-title'), daycardText: $('daycard-text'),
-    toast: $('toast'),
+    daycard: $('daycard'), daycardTitle: $('daycard-title'), daycardSub: $('daycard-sub'), daycardText: $('daycard-text'),
+    toast: $('toast'), title: $('title-screen'),
   });
-  el.bubbleMeta = el.bubble.querySelector('.bubble-meta');
-  el.bubbleText = el.bubble.querySelector('.bubble-text');
+  el.thoughtWho = el.thought.querySelector('.thought-who');
+  el.thoughtText = el.thought.querySelector('.thought-text');
   el.bannerTitle = el.banner.querySelector('.banner-title');
   el.bannerSub = el.banner.querySelector('.banner-sub');
 
-  el.start.addEventListener('click', h.onStart);
+  // pixel icons in buttons / store bar
+  for (const img of document.querySelectorAll('img[data-icon]')) img.src = iconDataUrl(img.dataset.icon);
+  el.res = {};
+  for (const [key, icon] of [['food', 'berry'], ['wood', 'wood'], ['stone', 'stone'], ['tools', 'axe']]) {
+    const d = document.createElement('div');
+    d.className = 'res';
+    const img = document.createElement('img'); img.src = iconDataUrl(icon); img.alt = key;
+    const v = document.createElement('span'); v.textContent = '0';
+    d.append(img, v);
+    el.resBar.appendChild(d);
+    el.res[key] = { box: d, v };
+  }
+
   el.vertical.addEventListener('click', h.onToggleVertical);
+  el.speed.addEventListener('click', h.onSpeed);
+  el.autocam.addEventListener('click', h.onAutoCam);
+  $('btn-creator').addEventListener('click', () => toggleCreator(true));
+  $('btn-creator-close').addEventListener('click', () => toggleCreator(false));
+  for (const b of document.querySelectorAll('[data-act]')) {
+    b.addEventListener('click', () => {
+      if (b.dataset.act === 'message') { el.messageForm.classList.remove('hidden'); el.messageInput.focus(); return; }
+      h.onCreator(b.dataset.act);
+    });
+  }
+  el.messageForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = el.messageInput.value.trim();
+    if (!text) return;
+    el.messageInput.value = '';
+    el.messageForm.classList.add('hidden');
+    toggleCreator(false);
+    h.onCreator('message', text);
+  });
+  $('btn-message-cancel').addEventListener('click', () => el.messageForm.classList.add('hidden'));
+
   $('btn-diary').addEventListener('click', h.onDiary);
   $('btn-diary-close').addEventListener('click', () => toggleDiary(false));
   $('btn-settings').addEventListener('click', () => toggleSettings(true));
@@ -52,59 +85,61 @@ export function init(h) {
     if (f) h.onImport(await f.text());
   });
   $('btn-reset').addEventListener('click', h.onReset);
-
-  // Sound
   const vol = $('volume-range');
   vol.addEventListener('input', () => h.onVolume(Number(vol.value) / 100));
   $('btn-mute').addEventListener('click', h.onMuteToggle);
-  for (const b of document.querySelectorAll('[data-sound]')) b.addEventListener('click', () => h.onSoundTest(b.dataset.sound));
-  const colony = $('colony-range');
-  colony.addEventListener('input', () => { $('colony-value').textContent = colony.value; h.onSoundTest('colony', Number(colony.value)); });
-  const aware = $('awareness-range');
-  aware.addEventListener('input', () => { $('awareness-value').textContent = `${aware.value}%`; h.onSoundTest('awareness', Number(aware.value) / 100); });
 
   $('btn-copy').addEventListener('click', h.onCopyCaption);
-  $('title-screen').addEventListener('click', () => {
-    $('title-screen').classList.add('gone');
-    h.onTitleDismissed?.();
-  });
   $('btn-daycard-close').addEventListener('click', () => hideDayCard());
   el.daycard.addEventListener('click', (e) => { if (e.target === el.daycard || isClean()) hideDayCard(); });
+  el.title.addEventListener('click', () => { el.title.classList.add('gone'); h.onTitleDismissed?.(); });
 }
 
 // ---------- HUD ----------
 export function setDay(n, animate = true) {
   el.dayNum.textContent = String(n);
-  if (animate) {
-    el.dayCounter.classList.remove('pop');
-    void el.dayCounter.offsetWidth;
-    el.dayCounter.classList.add('pop');
-  }
+  if (animate) { el.dayCounter.classList.remove('pop'); void el.dayCounter.offsetWidth; el.dayCounter.classList.add('pop'); }
 }
-export function setStatus(text) { el.status.textContent = text; }
-/** Colony counter in the HUD: "MYCEL: 12" */
-export function setColonyCount(n) { $('colony-num').textContent = String(n); }
-export const titleVisible = () => !$('title-screen').classList.contains('gone');
-export function setStartEnabled(enabled, label) {
-  el.start.disabled = !enabled;
-  if (label) el.start.textContent = label;
+let lastColony = -1;
+export function setColonyCount(n) {
+  if (n === lastColony) return;
+  const grew = lastColony >= 0 && n > lastColony;
+  lastColony = n;
+  el.colonyNum.textContent = String(n);
+  if (grew) { el.colonyCounter.classList.remove('bump'); void el.colonyCounter.offsetWidth; el.colonyCounter.classList.add('bump'); }
+}
+export function setStatus(text) { if (el.status.textContent !== text) el.status.textContent = text; }
+const lastRes = {};
+export function setResources(r) {
+  for (const k of ['food', 'wood', 'stone', 'tools']) {
+    const v = String(r[k] ?? 0);
+    if (lastRes[k] === v) continue;
+    const up = lastRes[k] !== undefined && Number(v) > Number(lastRes[k]);
+    lastRes[k] = v;
+    el.res[k].v.textContent = v;
+    if (up) { el.res[k].box.classList.remove('flash'); void el.res[k].box.offsetWidth; el.res[k].box.classList.add('flash'); }
+  }
 }
 export function setBrainStatus({ mode, reason }) {
   el.brainPill.classList.toggle('gemini', mode === 'gemini');
   el.brainPill.classList.toggle('fallback', mode !== 'gemini');
-  el.brainLabel.textContent = mode === 'gemini' ? 'Gemini brain' : reason && reason !== 'No API key' ? 'Built-in brain (Gemini offline)' : 'Built-in brain';
+  el.brainLabel.textContent = mode === 'gemini' ? 'Gemini hive mind' : reason && reason !== 'No API key' ? 'Instincts (Gemini offline)' : 'Instincts (no Gemini key)';
   el.brainPill.title = reason || '';
 }
 export function setVertical(on) {
   el.app.classList.toggle('vertical', on);
   el.vertical.textContent = on ? '16:9' : '9:16';
 }
+export function setSpeedLabel(t) { el.speed.textContent = t; }
+export function setAutoCam(on) { el.autocam.classList.toggle('on', on); el.autocam.textContent = on ? 'Auto-cam' : 'Free cam'; }
+export const titleVisible = () => !el.title.classList.contains('gone');
+export function dismissTitle() { el.title.click(); }
 
 // ---------- Recording mode ----------
 export const isClean = () => el.app.classList.contains('clean');
 export function setClean(on) {
   el.app.classList.toggle('clean', on);
-  if (on) { toggleDiary(false); toggleSettings(false); toast('UI hidden · tap the top-right corner to show it'); }
+  if (on) { toggleDiary(false); toggleSettings(false); toggleCreator(false); toast('UI hidden · tap the top-right corner to show it'); }
 }
 export const toggleClean = () => setClean(!isClean());
 
@@ -116,76 +151,26 @@ export function toast(text, ms = 2200) {
   toastTimer = setTimeout(() => el.toast.classList.remove('visible'), ms);
 }
 
-// ---------- Thought bubble ----------
-/** Types the text out. Resolves when fully typed. */
-export function showThought(text, meta = '') {
-  const token = ++typeToken;
-  el.bubbleMeta.textContent = meta;
-  el.bubbleMeta.hidden = !meta;
-  const typed = document.createElement('span');
-  const ghost = document.createElement('span'); // reserves final size so the bubble doesn't jump
-  ghost.className = 'ghost';
-  ghost.textContent = text;
-  el.bubbleText.replaceChildren(typed, ghost);
-  el.bubble.classList.add('visible');
-
-  const chars = [...text];
-  let i = 0;
-  return new Promise((resolve) => {
-    const tick = () => {
-      if (token !== typeToken) return resolve();
-      i++;
-      typed.textContent = chars.slice(0, i).join('');
-      ghost.textContent = chars.slice(i).join('');
-      if (i >= chars.length) return resolve();
-      const c = chars[i - 1];
-      setTimeout(tick, '.!?…'.includes(c) ? 220 : c === ',' ? 120 : 30);
-    };
-    setTimeout(tick, 250);
-  });
-}
-export function hideThought() {
-  typeToken++;
-  el.bubble.classList.remove('visible');
+// ---------- Colony thought / Watcher ----------
+let thoughtTimer = 0;
+export function showThought(who, text, { watcher = false, ms = 6500 } = {}) {
+  el.thoughtWho.textContent = who;
+  el.thoughtText.textContent = text;
+  el.thought.classList.toggle('watcher', watcher);
+  el.thought.classList.add('visible');
+  clearTimeout(thoughtTimer);
+  thoughtTimer = setTimeout(() => el.thought.classList.remove('visible'), ms);
 }
 
-/** Anchor the bubble's tail at stage pixel (x, y). */
-export function positionBubble(x, y) {
-  const W = el.stage.clientWidth;
-  const bw = el.bubble.offsetWidth;
-  const bh = el.bubble.offsetHeight;
-  const gap = Math.min(W, el.stage.clientHeight) * 0.06;
-  const margin = 10;
-  const left = Math.max(margin, Math.min(W - bw - margin, x - bw / 2));
-  const hud = $('hud-top');
-  const minTop = hud ? hud.offsetTop + hud.offsetHeight + margin : margin;
-  const top = Math.max(minTop, y - bh - gap);
-  el.bubble.style.left = `${left}px`;
-  el.bubble.style.top = `${top}px`;
-  el.bubble.style.setProperty('--tail-x', `${Math.max(20, Math.min(bw - 20, x - left))}px`);
-}
-
-// ---------- Location labels ----------
-export function createLabels(locations) {
-  el.labels.replaceChildren();
-  for (const [id, loc] of Object.entries(locations)) {
-    const d = document.createElement('div');
-    d.className = 'label';
-    d.textContent = `${loc.emoji} ${loc.name}`;
-    el.labels.appendChild(d);
-    labels[id] = d;
-  }
-}
-export function positionLabel(id, x, y, visible = true) {
-  const d = labels[id];
-  if (!d) return;
-  d.classList.toggle('offscreen', !visible);
-  const half = d.offsetWidth / 2 + 6;
-  const cx = Math.max(half, Math.min(el.stage.clientWidth - half, x));
-  d.style.transform = `translate(${cx}px, ${y}px) translate(-50%, -100%)`;
-}
-export function setActiveLabel(id) {
-  for (const [k, d] of Object.entries(labels)) d.classList.toggle('active', k === id);
+// ---------- Event feed ----------
+export function feed(text, kind = '') {
+  const d = document.createElement('div');
+  d.className = `feed-item ${kind}`;
+  d.textContent = text;
+  el.feed.appendChild(d);
+  while (el.feed.children.length > 4) el.feed.firstChild.remove();
+  setTimeout(() => d.classList.add('old'), 6000);
+  setTimeout(() => d.remove(), 7000);
 }
 
 // ---------- Banner ----------
@@ -200,42 +185,41 @@ export async function showBanner(title, sub = '', ms = 1800) {
 }
 
 // ---------- End-of-day card ----------
-let dayCardResolve = null;
-/** Shows the diary of the day; resolves when closed. */
-export function showDayCard(day, text) {
+let dayCardResolve = null, dayCardTimer = 0;
+export function showDayCard(day, text, sub, autoMs = 14000) {
   el.daycardTitle.textContent = `DAY ${day}`;
+  el.daycardSub.textContent = sub;
   el.daycardText.textContent = text;
   el.daycard.classList.remove('hidden');
+  clearTimeout(dayCardTimer);
+  dayCardTimer = setTimeout(hideDayCard, autoMs);
   return new Promise((r) => { dayCardResolve = r; });
 }
 export function hideDayCard() {
   el.daycard.classList.add('hidden');
+  clearTimeout(dayCardTimer);
   if (dayCardResolve) { const r = dayCardResolve; dayCardResolve = null; r(); }
 }
-
-// ---------- Sound settings ----------
-export function setSoundState({ volume, muted, running, available }) {
-  $('volume-range').value = String(Math.round(volume * 100));
-  $('volume-value').textContent = muted ? '(muted)' : `${Math.round(volume * 100)}%`;
-  const b = $('btn-mute');
-  b.textContent = muted ? 'Unmute' : 'Mute';
-  b.classList.toggle('on', muted);
-  $('sound-status').textContent = !available
-    ? 'This browser has no Web Audio.'
-    : running ? 'Sound is on. iPhone screen recordings include it.' : 'Sound starts with your first tap.';
-}
+export const dayCardOpen = () => !el.daycard.classList.contains('hidden');
 
 // ---------- Panels ----------
 export function toggleDiary(force) {
   const open = force ?? el.diary.classList.contains('hidden');
   el.diary.classList.toggle('hidden', !open);
-  if (open) toggleSettings(false);
+  if (open) { el.settings.classList.add('hidden'); el.creator.classList.add('hidden'); }
   return open;
 }
 export function toggleSettings(force) {
   const open = force ?? el.settings.classList.contains('hidden');
   el.settings.classList.toggle('hidden', !open);
-  if (open) el.diary.classList.add('hidden');
+  if (open) { el.diary.classList.add('hidden'); el.creator.classList.add('hidden'); }
+  return open;
+}
+export function toggleCreator(force) {
+  const open = force ?? el.creator.classList.contains('hidden');
+  el.creator.classList.toggle('hidden', !open);
+  if (!open) el.messageForm.classList.add('hidden');
+  if (open) { el.diary.classList.add('hidden'); el.settings.classList.add('hidden'); }
   return open;
 }
 
@@ -255,47 +239,40 @@ export function setKeyStatus(text, kind = '') {
   el.keyStatus.className = `note ${kind}`;
 }
 export function setMemorySummary(text) { el.memorySummary.textContent = text; }
+export function setSoundState({ volume, muted, running, available }) {
+  $('volume-range').value = String(Math.round(volume * 100));
+  $('volume-value').textContent = muted ? '(muted)' : `${Math.round(volume * 100)}%`;
+  const b = $('btn-mute');
+  b.textContent = muted ? 'Unmute' : 'Mute';
+  b.classList.toggle('on', muted);
+  $('sound-status').textContent = !available ? 'This browser has no Web Audio.'
+    : running ? 'Sound is on. iPhone screen recordings include it.' : 'Sound starts with your first tap.';
+}
 
-export function renderDiary(state, locations) {
+export function renderDiary(state) {
   el.diaryList.replaceChildren();
-  const days = new Set([...state.diary.map((e) => e.day), ...state.diaryEntries.map((d) => d.day)]);
-  if (!days.size) {
+  const entries = [...state.diaryEntries].sort((a, b) => b.day - a.day);
+  if (!entries.length) {
     const p = document.createElement('div');
     p.className = 'diary-empty';
-    p.textContent = 'Nothing yet. Press “Start Day” and the Mycel will begin to explore.';
+    p.textContent = 'Nothing yet. The Mycel write their diary at the end of each day.';
     el.diaryList.appendChild(p);
     return;
   }
-  for (const day of [...days].sort((a, b) => b - a)) {
+  for (const d of entries) {
     const sec = document.createElement('section');
     sec.className = 'diary-day';
     const h = document.createElement('h3');
-    h.textContent = `Day ${day}`;
-    sec.appendChild(h);
-    const summary = state.diaryEntries.find((d) => d.day === day);
-    if (summary) {
-      const s = document.createElement('div');
-      s.className = 'diary-summary';
-      s.textContent = summary.text;
-      sec.appendChild(s);
-    }
-    for (const e of state.diary.filter((x) => x.day === day)) {
-      const loc = locations[e.location];
-      const card = document.createElement('div');
-      card.className = 'diary-entry';
-      const where = document.createElement('div');
-      where.className = 'where';
-      where.textContent = loc ? `${loc.emoji} ${loc.name}` : e.location;
-      const text = document.createElement('div');
-      text.textContent = e.thought;
-      card.append(where, text);
-      if (e.reading || e.takeaway) {
-        const r = document.createElement('div');
-        r.className = 'read';
-        r.textContent = e.reading ? `Read “${e.reading.title}”${e.takeaway ? ` · learned: ${e.takeaway}` : ''}` : `Noticed: ${e.takeaway}`;
-        card.appendChild(r);
-      }
-      sec.appendChild(card);
+    h.textContent = d.legacy ? `Day ${d.day} (before the forest)` : `Day ${d.day} · ${d.population} Mycel`;
+    const s = document.createElement('div');
+    s.className = 'diary-summary';
+    s.textContent = d.text;
+    sec.append(h, s);
+    if (d.events?.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'diary-events';
+      for (const e of d.events.slice(0, 10)) { const li = document.createElement('li'); li.textContent = e; ul.appendChild(li); }
+      sec.appendChild(ul);
     }
     el.diaryList.appendChild(sec);
   }

@@ -256,6 +256,8 @@ class AudioEngine {
       this._lfo(rand(0.05, 0.12), 120, f1.frequency); // slow vowel shifts
       o.start();
       this.voices.push(g);
+      (this.voiceOscs ??= []).push(o);
+      (this.formants ??= []).push(f2);
     }
     // Whisper: band-passed noise breathing in and out
     const n = this._noiseSource();
@@ -274,6 +276,7 @@ class AudioEngine {
     const active = Math.min(this.colony, this.voices.length);
     this.voices.forEach((g, i) => g.gain.setTargetAtTime(i < active ? 0.5 / Math.sqrt(Math.max(1, active)) : 0, t, 1.5));
     const crowd = clamp((this.colony - 1) / 15, 0, 1);
+    this._crowd = crowd;
     this.humGain.gain.setTargetAtTime(this.colony === 0 ? 0 : 0.06 + 0.45 * crowd, t, 2);
     this.whisper.gain.setTargetAtTime(crowd * 0.6, t, 2);
   }
@@ -297,15 +300,20 @@ class AudioEngine {
     }
     const g = c.createGain();
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(gain, t0 + attack);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain * (this._gm ?? 1)), t0 + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     o.connect(g).connect(bus);
     o.start(t0); mod.start(t0);
     o.stop(t0 + dur + 0.05); mod.stop(t0 + dur + 0.05);
   }
 
-  chirp(emotion = 'neutral') {
+  chirp(emotion = 'neutral', gainMul = 1) {
     if (!this.running) return;
+    this._gm = Math.max(0.1, Math.min(1, gainMul));
+    try { this._chirp(emotion); } finally { this._gm = 1; }
+  }
+
+  _chirp(emotion) {
     const t = this.ctx.currentTime + 0.02;
     const p = rand(0.92, 1.08); // every creature sounds a little different
     switch (emotion) {
@@ -319,9 +327,37 @@ class AudioEngine {
           this._tone(t + i * 0.07, 0.06, f, f * 0.85, { gain: 0.11, vib: 60, vibRate: 32, fm: 0.1 });
         }
         break;
-      case 'excited':
-      case 'happy': // bright rising arpeggio
+      case 'excited': // bright rising arpeggio
         [660, 830, 990, 1320].forEach((f, i) => this._tone(t + i * 0.075, 0.11, f * p, f * p * 1.04, { type: 'triangle', gain: 0.15, fm: 0.15 }));
+        break;
+      case 'happy': // quick happy trill
+        for (let i = 0; i < 6; i++) this._tone(t + i * 0.055, 0.07, (i % 2 ? 1180 : 990) * p, (i % 2 ? 1250 : 1040) * p, { type: 'triangle', gain: 0.12, fm: 0.1, attack: 0.008 });
+        break;
+      case 'angry': { // short buzzing grumble
+        const c = this.ctx;
+        for (let i = 0; i < 3; i++) {
+          const t0 = t + i * 0.13;
+          const o = c.createOscillator(); o.type = 'sawtooth';
+          o.frequency.setValueAtTime(150 * p, t0); o.frequency.linearRampToValueAtTime(115 * p, t0 + 0.11);
+          const l = c.createOscillator(); l.frequency.value = 38; const lg = c.createGain(); lg.gain.value = 25; l.connect(lg).connect(o.frequency);
+          const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 1.4;
+          const g = c.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
+          o.connect(bp).connect(g).connect(this.sfxBus);
+          o.start(t0); l.start(t0); o.stop(t0 + 0.13); l.stop(t0 + 0.13);
+        }
+        break;
+      }
+      case 'hungry': // low wobbly grumble + a small whine
+        this._tone(t, 0.55, 120 * p, 92 * p, { gain: 0.16, vib: 14, vibRate: 11, fm: 0.8, attack: 0.05 });
+        this._tone(t + 0.5, 0.35, 520 * p, 430 * p, { gain: 0.07, vib: 5, vibRate: 6 });
+        break;
+      case 'love': // soft warbling coo, rising
+        this._tone(t, 0.32, 520 * p, 660 * p, { gain: 0.12, vib: 18, vibRate: 7, attack: 0.05 });
+        this._tone(t + 0.34, 0.45, 660 * p, 880 * p, { gain: 0.12, vib: 22, vibRate: 7.5, attack: 0.05 });
+        break;
+      case 'birth': // tiny first coo
+        this._tone(t, 0.18, 900 * p, 1300 * p, { gain: 0.1, fm: 0.15 });
+        this._tone(t + 0.2, 0.25, 1100 * p, 1500 * p, { type: 'triangle', gain: 0.1, fm: 0.1 });
         break;
       case 'sad': // slow falling coo
         this._tone(t, 0.75, 440 * p, 330 * p, { gain: 0.14, vib: 7, vibRate: 4, attack: 0.08 });
@@ -446,6 +482,123 @@ class AudioEngine {
     o.start(t0); rm.start(t0); o.stop(t0 + durationSec + 0.05); rm.stop(t0 + durationSec + 0.05);
     // a low swell underneath
     this._tone(t0, durationSec + 0.6, 55, 52, { gain: 0.2, fm: 1.5, attack: 0.3, bus: this.eventBus });
+  }
+
+  // -------------------------------------------------------------------------
+  // Colony mood, daylight, world sounds
+  // -------------------------------------------------------------------------
+  /** valence -1..1 (sad..happy), arousal 0..1 (calm..agitated): reshapes the colony choir. */
+  setMood({ valence = 0, arousal = 0.3 } = {}) {
+    if (!this.ctx || !this.voiceOscs) return;
+    const t = this.ctx.currentTime;
+    const shift = valence * 220 - (valence < 0 ? 80 : 0); // cents: brighter when happy, lower when sad
+    this.voiceOscs.forEach((o, i) => o.detune.setTargetAtTime(shift + (arousal > 0.6 ? (i % 2 ? 35 : -35) : 0), t, 1.2));
+    this.formants.forEach((f) => f.frequency.setTargetAtTime(1000 + valence * 300 + arousal * 400, t, 1.2));
+    this.whisper.gain.setTargetAtTime(Math.min(0.9, (this._crowd ?? 0) * 0.6 + arousal * 0.25), t, 1);
+  }
+
+  /** daylight 0..1: warm and open by day, darker by night. */
+  setDaylight(d) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.daylight = d;
+    if (!this.dayLayer) {
+      const c = this.ctx;
+      this.dayLayer = c.createGain(); this.dayLayer.gain.value = 0;
+      for (const f of [138.59, 220, 277.18, 329.63]) { // A major colour on top of the drone
+        const o = c.createOscillator(); o.type = 'triangle'; o.frequency.value = f; o.detune.value = rand(-6, 6);
+        const g = c.createGain(); g.gain.value = 0.05;
+        o.connect(g).connect(this.dayLayer); o.start();
+      }
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
+      this.dayLayer.connect(lp).connect(this.padBus);
+      this._lfo(0.06, 0.02, this.dayLayer.gain);
+    }
+    this.dayLayer.gain.setTargetAtTime(d * 0.5 * (1 - (this.eeriness ?? 0) * 0.6), t, 2);
+    this.padFilter.frequency.setTargetAtTime(380 + d * 420 - (this.eeriness ?? 0) * 220, t, 2);
+    this.padGain.gain.setTargetAtTime(0.55 + (1 - d) * 0.4, t, 2);
+  }
+
+  chop(gainMul = 1) {
+    if (!this.running) return;
+    const c = this.ctx, t = c.currentTime + 0.01;
+    this._tone(t, 0.12, rand(190, 230), 110, { gain: 0.3 * gainMul, fm: 0.9, attack: 0.002, bus: this.eventBus });
+    const n = c.createBufferSource(); n.buffer = this.noise;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 2;
+    const g = c.createGain(); g.gain.setValueAtTime(0.2 * gainMul, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    n.connect(bp).connect(g).connect(this.eventBus); n.start(t, rand(0, 2)); n.stop(t + 0.06);
+  }
+
+  treeFall() {
+    if (!this.running) return;
+    const c = this.ctx, t = c.currentTime + 0.01;
+    // creak
+    const o = c.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(85, t); o.frequency.linearRampToValueAtTime(60, t + 1.0);
+    const l = c.createOscillator(); l.frequency.value = 23; const lg = c.createGain(); lg.gain.value = 18; l.connect(lg).connect(o.frequency);
+    const lp = c.createBiquadFilter(); lp.type = 'bandpass'; lp.frequency.value = 600; lp.Q.value = 3;
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.2); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+    o.connect(lp).connect(g).connect(this.eventBus); o.start(t); l.start(t); o.stop(t + 1.2); l.stop(t + 1.2);
+    // crash + thud
+    const t2 = t + 1.05;
+    const n = c.createBufferSource(); n.buffer = this.noise;
+    const nl = c.createBiquadFilter(); nl.type = 'lowpass'; nl.frequency.setValueAtTime(3000, t2); nl.frequency.exponentialRampToValueAtTime(200, t2 + 1.2);
+    const ng = c.createGain(); ng.gain.setValueAtTime(0.5, t2); ng.gain.exponentialRampToValueAtTime(0.0001, t2 + 1.3);
+    n.connect(nl).connect(ng).connect(this.eventBus); n.start(t2, rand(0, 2)); n.stop(t2 + 1.4);
+    this._tone(t2, 0.5, 70, 38, { gain: 0.5, fm: 0.4, attack: 0.003, bus: this.eventBus });
+  }
+
+  spore(gainMul = 1) {
+    if (!this.running) return;
+    const c = this.ctx, t = c.currentTime + 0.01;
+    const n = c.createBufferSource(); n.buffer = this.noise;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+    bp.frequency.setValueAtTime(600, t); bp.frequency.exponentialRampToValueAtTime(2600, t + 0.35);
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25 * gainMul, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    n.connect(bp).connect(g).connect(this.eventBus); n.start(t, rand(0, 2)); n.stop(t + 0.55);
+    for (let i = 0; i < 4; i++) this._tone(t + 0.1 + i * 0.06, 0.12, rand(1800, 2800), rand(2400, 3400), { gain: 0.035 * gainMul, fm: 0, bus: this.eventBus });
+  }
+
+  knock(gainMul = 1) {
+    if (!this.running) return;
+    this._tone(this.ctx.currentTime + 0.01, 0.14, 130, 70, { gain: 0.3 * gainMul, fm: 0.6, attack: 0.002, bus: this.eventBus });
+  }
+
+  /** bonk (Mycel knocked over) / poke (spear hits beetle) / threat (beetles appear) / lost */
+  sfx(name, gainMul = 1) {
+    if (!this.running) return;
+    const t = this.ctx.currentTime + 0.01;
+    if (name === 'bonk') { this._tone(t, 0.18, 400, 160, { type: 'square', gain: 0.08 * gainMul, fm: 0 }); this.chirp('scared', gainMul); }
+    else if (name === 'poke') { this._tone(t, 0.08, 900, 500, { type: 'triangle', gain: 0.16 * gainMul, fm: 0.3, bus: this.eventBus }); }
+    else if (name === 'threat') { this._tone(t, 1.6, 73.4, 69.3, { type: 'sawtooth', gain: 0.18, fm: 0.3, attack: 0.3, bus: this.eventBus }); this._tone(t + 0.2, 1.4, 103.8, 98, { type: 'sawtooth', gain: 0.12, fm: 0.2, attack: 0.3, bus: this.eventBus }); }
+    else if (name === 'lost') { this.chirp('sad', 1); this.spore(0.6); }
+  }
+
+  /** Fire crackle loop; level 0..1 (fire intensity × nearness to the camera). */
+  setFire(level) {
+    if (!this.running) return;
+    const c = this.ctx;
+    if (!this.fireNodes) {
+      const src = this._noiseSource();
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+      const g = c.createGain(); g.gain.value = 0;
+      src.connect(lp).connect(g).connect(this.eventBus); src.start();
+      const crackle = setInterval(() => {
+        if (!this.running || (this.fireLevel ?? 0) < 0.02) return;
+        const now = c.currentTime;
+        for (let i = 0; i < 2; i++) {
+          if (Math.random() > 0.6) continue;
+          const d = c.createBufferSource(); d.buffer = this.noise;
+          const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = rand(1500, 5000); bp.Q.value = 5;
+          const dg = c.createGain(); const at = now + rand(0, 0.15);
+          dg.gain.setValueAtTime(rand(0.05, 0.25) * this.fireLevel, at); dg.gain.exponentialRampToValueAtTime(0.0001, at + 0.02);
+          d.connect(bp).connect(dg).connect(this.eventBus); d.start(at, rand(0, 2)); d.stop(at + 0.03);
+        }
+      }, 90);
+      this.fireNodes = { g, crackle };
+    }
+    this.fireLevel = Math.max(0, Math.min(1, level));
+    this.fireNodes.g.gain.setTargetAtTime(this.fireLevel * 0.12, c.currentTime, 0.4);
   }
 
   // -------------------------------------------------------------------------

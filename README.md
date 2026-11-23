@@ -1,9 +1,11 @@
 # The Mycel
 
-The Mycel (singular: a Mycel) are small round creatures with a pixel-screen face and a glowing
-mushroom cap, the only living things in an empty early-2000s city at dusk.
-Every in-game day a Mycel wakes up, walks to 3–4 places, reads books and articles,
-learns one thing at a time, grows, and writes a short diary entry.
+A god game in a bright forest clearing. The Mycel (singular: a Mycel) are small round mushroom
+creatures with a pixel-screen face and a glowing cap. Day 1 starts with a single Mycel; it releases
+spores, sprouts appear, and by nightfall there are 5–8 of them. Over the following days the colony
+gathers berries, mushrooms, sticks and stones, chops trees, discovers and lights the old fire pit,
+builds a storage pile and huts, crafts stone axes and spears, and from day 3 defends itself against
+thorn beetles at night. If food runs out they get hungry, sad, start fighting, and can dissolve into spores.
 
 Plain HTML + ES modules + Three.js (vendored in `vendor/`), no build step.
 Made for vertical (9:16) screen recordings, works in iPhone Safari.
@@ -17,7 +19,17 @@ python3 -m http.server 8000
 
 A local server is required (ES modules and `fetch` do not work over `file://`).
 
-## The Gemini brain (optional)
+## Playing
+
+- **Camera:** angled top-down. Drag to pan, pinch / mouse wheel to zoom, twist two fingers to rotate.
+  After a few seconds without input the **auto camera** follows the most interesting action.
+- **Speed:** 1× / 2× / 4× / pause. One day (day + night) takes about 2 minutes at 1×.
+- **Creator:** rain berries, rain, sunshine, light the fire, send thorn beetles, gift spores, send
+  knowledge (a page from the reading material), or write a message to the colony as the Watcher.
+- Icons over the heads show what each Mycel is doing (axe, berry, wood, stone, hammer, spear, fire,
+  zzz, !). Emote bubbles pop up when their mood changes (happy, curious, scared, angry, sad, hungry, in love).
+
+## The hive mind (Gemini, optional)
 
 Open **Settings** and paste a Gemini API key (free tier, from Google AI Studio).
 
@@ -32,55 +44,40 @@ Open **Settings** and paste a Gemini API key (free tier, from Google AI Studio).
 
 What Gemini does:
 
-| Call | Returns |
-| --- | --- |
-| `decideNextAction(state)` | `{ action, target, thought (≤15 words), emotion }` |
-| `read(location, state)` | one-sentence takeaway from an ~800-character chunk, stored as a learning |
-| `writeDiary(day)` | 2–3 sentence diary entry, shown at the end of the day with **Copy caption** |
+| Call | When | Returns |
+| --- | --- | --- |
+| `planDay(summary)` | once each morning | `{ goal, priorities, event, thought, watcherMessage }` |
+| `writeDiary(summary)` | each evening | 2–3 sentence diary entry, shown with **Copy caption** |
+| `read(folder, state)` | Creator → Send knowledge | one-sentence takeaway from an ~800-character chunk |
 
-## Growth
-
-Every stop adds a learning (reading takeaways at the library / internet café, observations
-at the park / shop). Stages unlock by learnings:
-
-| Learnings | Stage |
-| --- | --- |
-| 0 | Sprout (tiny cap) |
-| 4 | Little Cap |
-| 8 | Glow Spots |
-| 14 | Tiny Mushrooms (sprouts on the shell) |
-| 20 | True Colours (cap colour follows its favourite place) |
-| 28 | Bloom |
+Individual Mycel do not call Gemini: they follow simple rules (`colony.js`) weighted by the day's priorities.
 
 ## Sound
 
 All audio is generated live with the Web Audio API (`audio.js`): no sound files, no samples, no music.
 
-- **The Mycel:** soft chirps and coos; pitch and rhythm follow the emotion (curious, scared, excited, sad, thinking).
-- **Colony hum:** a whisper + formant-choir drone that thickens with the number of Mycel (`audio.setColony(n)`).
-- **Ambient pad:** slow, dark A-minor drone that gets eerier with the day number and the colony's awareness
-  (`audio.setStory({ day, awareness })`): tritone, pitch drift, a thin high whine, sub rumble.
-- **Events:** `audio.outage()`, `audio.rain(on)`, `audio.build()`, `audio.watcher()` (distorted glitch tone).
-- **Settings → Sound:** volume, mute, and a sound test for the story features that are not in the game yet.
-- Sound starts on the first tap (browser / iPhone rule). On iPhone it plays as media (`navigator.audioSession`
-  plus a silent, generated audio element for older iOS), so the silent switch doesn't mute it and screen
-  recordings include it.
+- **The Mycel:** every emotion has its own sound (happy trill, curious chirp, scared squeak, angry buzz,
+  sad whimper, hungry grumble, love coo), quieter when far from the camera.
+- **Colony hum:** whisper + formant choir that thickens with the population and follows the group mood.
+- **Ambient pad:** warm by day, darker at night, eerier as days pass and the colony's awareness grows.
+- **World:** axe chops, falling trees, spore puffs, building knocks, fire crackle near the fire, rain,
+  thorn-beetle drone, and a distorted glitch tone for messages to and from the Watcher.
+- **Settings → Sound:** volume and mute.
+- Sound starts on the first tap (browser / iPhone rule). On iPhone it plays as media, so the silent
+  switch doesn't mute it and screen recordings include it.
 
 ## Memory
 
-Saved in `localStorage` (`aiBeing.save.v1`). **Settings → Memory**: Export (JSON file),
-Import (with confirmation), Reset.
+Saved in `localStorage` (`aiBeing.save.v1`) at the end of each day. **Settings → Memory**: Export (JSON file),
+Import (with confirmation), Reset. Saves from the old night-city version keep their diary; the colony starts fresh.
 
-## Controls
+## Keys
 
-- **Start Day** / `Space`
-- **Hide UI** / `H`: only the DAY counter and thoughts stay. Tap the top-right corner to show the UI again.
-- **16:9 / 9:16** / `V` (9:16 is the default; on phones it fills the screen)
-- **Diary** / `D`
+`H` hide UI (tap the top-right corner to bring it back) · `V` 9:16 / 16:9 · `S` speed · `C` auto camera · `D` diary
 
 ## Reading material
 
-`library/` and `internet/` hold `.txt` files listed in each folder's `index.json`.
+`library/` and `internet/` hold the reading material for **Send knowledge**: `.txt` files listed in each folder's `index.json`.
 A header block ending with a `---` line is skipped when reading.
 
 Public-domain samples:
@@ -96,13 +93,16 @@ The other texts were written for this project.
 
 | File | Purpose |
 | --- | --- |
-| `main.js` | Boot, render loop, camera, day sequence |
-| `brain.js` | Gemini calls, validation, fallback thoughts, reading, diary |
+| `main.js` | Boot, render loop, day cycle, creator actions |
+| `forest.js` | The clearing: terrain, stream, trees, bushes, items, fire pit, storage, huts, light, spores |
+| `colony.js` | Simulation: needs, tasks, building, crafting, spores, threats, events |
+| `mycel.js` | Instanced rendering of the Mycel, emote bubbles, task icons, sprouts, beetles |
+| `camera.js` | God-view camera with touch controls and auto camera |
+| `icons.js` | Pixel faces, emote bubbles and task icons drawn on canvases |
+| `brain.js` | Hive mind: Gemini calls, validation, rule-based fallbacks, reading, diary |
 | `settings.js` | API key + model (device-local) |
 | `audio.js` | Procedural sound (Web Audio API) |
-| `memory.js` | Save state, growth stages, export / import |
-| `world.js` | The city |
-| `being.js` | A Mycel (3D model, face, growth) |
+| `memory.js` | Save state (end of each day), export / import |
 | `ui.js`, `style.css`, `index.html` | Overlay UI |
 
 Three.js is MIT licensed (`vendor/three.LICENSE`).

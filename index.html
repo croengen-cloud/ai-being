@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <!-- Scripts only from this site; network calls only to this site and the Gemini API. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'none'" />
-  <meta name="theme-color" content="#0b0918" />
+  <meta name="theme-color" content="#2f7f3a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -14,55 +14,71 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@600;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app">
     <div id="stage">
       <canvas id="scene"></canvas>
-      <div id="labels"></div>
-
-      <div id="bubble" aria-live="polite">
-        <div class="bubble-meta"></div>
-        <div class="bubble-text"></div>
-      </div>
 
       <div id="hud-top">
         <div id="day-counter">DAY <span id="day-num">1</span></div>
         <div id="colony-counter">MYCEL: <span id="colony-num">1</span></div>
-        <div id="status">Dusk · at home</div>
+        <div id="status">Morning · exploring</div>
         <div id="brain-pill" class="fallback"><span class="dot"></span><span id="brain-label">Built-in brain</span></div>
       </div>
+      <div id="res-bar" aria-label="Colony stores"></div>
+
+      <div id="thought" aria-live="polite"><div class="thought-who"></div><div class="thought-text"></div></div>
+      <div id="feed" aria-live="polite"></div>
 
       <div id="banner"><div class="banner-title"></div><div class="banner-sub"></div></div>
 
       <div id="controls">
-        <button id="btn-start" class="primary">Start Day 1</button>
-        <div class="small-row">
+        <div class="btn-row">
+          <button id="btn-creator" class="accent">Creator</button>
+          <button id="btn-speed" title="Speed (S)">1×</button>
+          <button id="btn-autocam" class="on" title="Auto camera (C)">Auto-cam</button>
           <button id="btn-diary" title="Diary (D)">Diary</button>
-          <button id="btn-settings" title="Settings">Settings</button>
+        </div>
+        <div class="btn-row">
+          <button id="btn-settings">Settings</button>
           <button id="btn-hide" title="Hide UI for recording (H)">Hide UI</button>
           <button id="btn-vertical" title="Switch 9:16 / 16:9 (V)">16:9</button>
         </div>
       </div>
 
-      <button id="unhide" aria-label="Show UI"></button>
-
-      <div id="title-screen" role="dialog" aria-label="The Mycel">
-        <h1 class="title-glitch" data-text="THE MYCEL">THE MYCEL</h1>
-        <p class="title-tap">tap to begin</p>
+      <div id="creator" class="sheet hidden" aria-label="Creator actions">
+        <header><h2>CREATOR</h2><button id="btn-creator-close">Close</button></header>
+        <div class="creator-grid">
+          <button data-act="berries"><img data-icon="berry" alt="" />Rain berries</button>
+          <button data-act="rain"><img data-icon="explore" alt="" />Rain</button>
+          <button data-act="sun"><img data-icon="fire" alt="" />Sunshine</button>
+          <button data-act="fire"><img data-icon="fire" alt="" />Light fire</button>
+          <button data-act="beetles"><img data-icon="alert" alt="" />Send beetles</button>
+          <button data-act="spores"><img data-icon="spore" alt="" />Gift spores</button>
+          <button data-act="knowledge"><img data-icon="explore" alt="" />Send knowledge</button>
+          <button data-act="message"><img data-icon="heart" alt="" />Message</button>
+        </div>
+        <form id="message-form" class="hidden">
+          <label for="message-input">Your message to the Mycel (you are the Watcher)</label>
+          <input id="message-input" maxlength="140" autocomplete="off" placeholder="We see you…" />
+          <div class="row"><button type="submit">Send</button><button type="button" id="btn-message-cancel">Cancel</button></div>
+        </form>
       </div>
+
+      <button id="unhide" aria-label="Show UI"></button>
       <div id="toast" role="status"></div>
 
       <div id="daycard" class="hidden" role="dialog" aria-label="Diary of the day">
         <div class="card">
           <div class="card-title" id="daycard-title">DAY 1</div>
-          <div class="card-sub">Mycel diary</div>
+          <div class="card-sub" id="daycard-sub">Mycel diary</div>
           <p id="daycard-text"></p>
           <div class="card-actions">
-            <button id="btn-copy">Copy caption</button>
-            <button id="btn-daycard-close">Close</button>
+            <button id="btn-copy" class="accent">Copy caption</button>
+            <button id="btn-daycard-close">Continue</button>
           </div>
         </div>
       </div>
@@ -76,8 +92,8 @@
         <header><h2>SETTINGS</h2><button id="btn-settings-close">Close</button></header>
         <div class="panel-body">
           <section>
-            <h3>Gemini brain</h3>
-            <p class="note">Paste a Gemini API key (free tier, from Google AI Studio). It is stored only in this browser on this device and sent only to Google's Gemini API. Without a key the Mycel uses its built-in thoughts.</p>
+            <h3>Hive mind (Gemini)</h3>
+            <p class="note">Paste a Gemini API key (free tier, from Google AI Studio). It is stored only in this browser on this device and sent only to Google's Gemini API. Without a key the Mycel use their built-in instincts.</p>
             <label for="key-input">API key</label>
             <input id="key-input" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste key…" />
             <div class="row">
@@ -93,29 +109,8 @@
             <h3>Sound</h3>
             <label for="volume-range">Volume <span id="volume-value"></span></label>
             <input id="volume-range" type="range" min="0" max="100" step="1" />
-            <div class="row">
-              <button id="btn-mute">Mute</button>
-            </div>
+            <div class="row"><button id="btn-mute">Mute</button></div>
             <p class="note" id="sound-status">Sound starts with your first tap.</p>
-            <details class="sound-test">
-              <summary>Sound test (story features coming later)</summary>
-              <div class="row">
-                <button data-sound="chirp:curious">Curious</button>
-                <button data-sound="chirp:scared">Scared</button>
-                <button data-sound="chirp:excited">Excited</button>
-                <button data-sound="chirp:sad">Sad</button>
-              </div>
-              <label for="colony-range">Colony size <span id="colony-value">1</span></label>
-              <input id="colony-range" type="range" min="1" max="24" step="1" value="1" />
-              <label for="awareness-range">Awareness <span id="awareness-value">0%</span></label>
-              <input id="awareness-range" type="range" min="0" max="100" step="1" value="0" />
-              <div class="row">
-                <button data-sound="outage">Power outage</button>
-                <button data-sound="rain">Rain on/off</button>
-                <button data-sound="build">Building</button>
-                <button data-sound="watcher">Watcher</button>
-              </div>
-            </details>
           </section>
           <section>
             <h3>Memory</h3>
@@ -126,14 +121,19 @@
               <button id="btn-reset" class="danger">Reset</button>
             </div>
             <input id="import-file" type="file" accept="application/json,.json" hidden />
-            <p class="note">Export saves the memory (days, diary, learnings) as a file. The API key is never included.</p>
+            <p class="note">Export saves the colony and its diary as a file. The API key is never included.</p>
           </section>
           <section>
-            <h3>Recording</h3>
-            <p class="note">9:16 is the default. "Hide UI" leaves only the DAY counter and the thoughts. Tap the top-right corner (or press H) to bring the buttons back. Space starts a day.</p>
+            <h3>Controls</h3>
+            <p class="note">Drag to move, pinch (or mouse wheel) to zoom, twist with two fingers to rotate. The auto camera takes over after a few seconds. "Hide UI" leaves only the counters and the action; tap the top-right corner (or press H) to bring the buttons back.</p>
           </section>
         </div>
       </aside>
+
+      <div id="title-screen" role="dialog" aria-label="The Mycel">
+        <h1 class="title-glitch" data-text="THE MYCEL">THE MYCEL</h1>
+        <p class="title-tap">tap to begin</p>
+      </div>
     </div>
   </div>
   <script type="module" src="main.js"></script>

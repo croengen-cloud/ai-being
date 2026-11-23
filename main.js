@@ -1,72 +1,129 @@
-// main.js — boot, render loop, third-person camera, and the day sequence.
+// main.js — boot, render loop, day cycle, hive mind calls, creator actions, UI wiring.
 import * as THREE from './vendor/three.module.js';
-import { createWorld, LOCATIONS, NODES, findPath, groundHeight } from './world.js';
-import { Being } from './being.js';
+import { createForest } from './forest.js';
+import { createMycelRenderer } from './mycel.js';
+import { Colony, DAY_SECONDS } from './colony.js';
+import { createGodCamera } from './camera.js';
 import * as brain from './brain.js';
 import * as ui from './ui.js';
 import { audio } from './audio.js';
+import { glowTexture } from './icons.js';
 import { MODELS, getModel, setModel, hasApiKey, setApiKey, clearApiKey } from './settings.js';
-import { STAGES, stageFor, loadState, saveState, clearState, exportState, importState, interests } from './memory.js';
+import { loadState, saveState, clearState, exportState, importState } from './memory.js';
 
 const PREFS_KEY = 'aiBeing.prefs.v1';
-// Internal render height in pixels: low on purpose (PS2/Dreamcast-era look, and cheap on phones).
-const RENDER_HEIGHT = { landscape: 480, vertical: 640 };
 const isTouch = matchMedia('(pointer: coarse)').matches;
+const SPEEDS = [1, 2, 4, 0];
 
-function loadPrefs() {
-  try { return JSON.parse(localStorage.getItem(PREFS_KEY)) ?? {}; } catch { return {}; }
-}
-function savePrefs(p) {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
-}
+function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) ?? {}; } catch { return {}; } }
+function savePrefs(p) { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ } }
 
 let state = loadState();
 const prefs = loadPrefs();
 const params = new URLSearchParams(location.search);
-// 9:16 is the default; ?vertical=0 or the toggle switches to 16:9.
 let vertical = params.has('vertical') ? params.get('vertical') !== '0' : prefs.vertical ?? true;
 
 // ---------------------------------------------------------------------------
-// Scene setup
+// Renderer, world, colony, camera
 // ---------------------------------------------------------------------------
 await Promise.race([document.fonts?.ready.catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
 
 const stage = document.getElementById('stage');
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
 
-const world = createWorld();
+const world = createForest({ shadowSize: isTouch ? 1024 : 2048 });
 const scene = world.scene;
-const camera = new THREE.PerspectiveCamera(50, 9 / 16, 0.1, 1000);
+const mycelRenderer = createMycelRenderer(scene);
+const god = createGodCamera(canvas, { onUserInput: () => { if (god.auto) ui.setAutoCam(true); } });
+const camera = god.camera;
 
-const being = new Being(scene, { groundHeight });
-let currentNode = LOCATIONS.home.node;
-let currentLoc = 'home';
-being.setPosition(NODES[currentNode].x, NODES[currentNode].z);
-being.root.position.y = groundHeight(NODES[currentNode].x, NODES[currentNode].z);
+// Rain (creator action)
+const RAIN_N = 900;
+const rainGeo = new THREE.BufferGeometry();
+const rainPos = new Float32Array(RAIN_N * 3);
+for (let i = 0; i < RAIN_N; i++) rainPos.set([(Math.random() - 0.5) * 60, Math.random() * 30, (Math.random() - 0.5) * 60], i * 3);
+rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0xcfe8ff, size: 0.16, map: glowTexture(), transparent: true, opacity: 0.8, depthWrite: false }));
+rain.visible = false; rain.frustumCulled = false;
+scene.add(rain);
+let raining = false;
 
-function applyGrowth() {
-  being.setEvolution({ stage: state.stage, learnings: state.learnings.length, interests: interests(state) });
+let colony;
+function makeColony() {
+  colony = new Colony(world, scene, state.colony, {
+    onEvent: handleEvent,
+    onSound: playSound,
+    onChirp: (emotion, m) => audio.chirp(emotion, nearness(m)),
+  });
+  colony.day = state.day;
 }
-applyGrowth();
+makeColony();
+
+// ---------------------------------------------------------------------------
+// Sound helpers
+// ---------------------------------------------------------------------------
+function nearness(p) {
+  if (!p || p.x === undefined) return 1;
+  const t = god.state.target;
+  const d = Math.hypot(p.x - t.x, p.z - t.z);
+  return THREE.MathUtils.clamp(1.15 - d / (god.state.dist * 0.9), 0.12, 1);
+}
+function playSound(name, p) {
+  const g = nearness(p);
+  if (name === 'chop') audio.chop(g);
+  else if (name === 'treeFall') audio.treeFall();
+  else if (name === 'spore') audio.spore(g);
+  else if (name === 'birth') audio.chirp('birth', g);
+  else if (name === 'knock') audio.knock(g);
+  else if (name === 'build') audio.build();
+  else if (name === 'fight') audio.chirp('angry', g);
+  else audio.sfx(name, g);
+}
+function unlockAudio() { audio.unlock(); }
+for (const ev of ['pointerdown', 'touchend', 'keydown']) window.addEventListener(ev, unlockAudio, { capture: true, passive: true });
+const refreshSound = () => ui.setSoundState({ volume: audio.volume, muted: audio.muted, running: audio.running, available: !!(window.AudioContext || window.webkitAudioContext) });
+audio.onChange(refreshSound);
+
+// ---------------------------------------------------------------------------
+// Events -> feed, diary log, thoughts
+// ---------------------------------------------------------------------------
+const BIG = new Set(['discovery', 'fire', 'build', 'treeFall', 'creator', 'love', 'defend', 'watcher']);
+const BAD = new Set(['threat', 'steal', 'lost', 'fight', 'fireOut']);
+let birthsBatch = 0, birthTimer = 0;
+function handleEvent(e) {
+  if (e.type === 'birth') {
+    // births come in waves: summarize them in the feed
+    birthsBatch++;
+    clearTimeout(birthTimer);
+    birthTimer = setTimeout(() => {
+      ui.feed(birthsBatch === 1 ? e.text : `${birthsBatch} new Mycel sprouted!`, 'big');
+      birthsBatch = 0;
+    }, 1200);
+    return;
+  }
+  if (['plan', 'craft'].includes(e.type) && Math.random() < 0.5) return; // keep the feed calm
+  ui.feed(e.text, BIG.has(e.type) ? 'big' : BAD.has(e.type) ? 'bad' : '');
+}
 
 // ---------------------------------------------------------------------------
 // UI wiring
 // ---------------------------------------------------------------------------
-let busy = false;
+let speedIdx = 0;
 let lastCaption = '';
+let started = false;
 
 function refreshSettingsPanel() {
   ui.fillModels(MODELS, getModel());
   ui.setKeyField(hasApiKey());
-  if (!hasApiKey()) ui.setKeyStatus('No key: the Mycel uses its built-in thoughts.');
-  const next = STAGES[state.stage + 1];
-  ui.setMemorySummary(
-    `Day ${state.day} · ${state.learnings.length} learnings · stage “${STAGES[state.stage].name}”` +
-    (next ? ` (next: “${next.name}” at ${next.at})` : ' (fully grown)'),
-  );
+  if (!hasApiKey()) ui.setKeyStatus('No key: the Mycel follow their built-in instincts.');
+  ui.setMemorySummary(`Day ${state.day} · ${colony.mycel.length} Mycel · ${state.diaryEntries.length} diary entries · ${state.learnings.length} learnings`);
 }
-function refreshBrainPill() { ui.setBrainStatus(brain.brainStatus()); }
+const refreshBrainPill = () => ui.setBrainStatus(brain.brainStatus());
 
 function download(filename, text) {
   const blob = new Blob([text], { type: 'application/json' });
@@ -76,85 +133,55 @@ function download(filename, text) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
-
 async function copyText(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    // Older iOS Safari fallback
+  try { await navigator.clipboard.writeText(text); return true; } catch {
     const ta = document.createElement('textarea');
     ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch { ok = false; }
-    ta.remove();
-    return ok;
+    let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove(); return ok;
   }
+}
+function setSpeed(i) {
+  speedIdx = i;
+  ui.setSpeedLabel(SPEEDS[i] ? `${SPEEDS[i]}×` : 'Paused');
 }
 
 ui.init({
-  onStart: () => runDay(),
   onToggleVertical: () => setVerticalMode(!vertical),
-  onDiary: () => { if (ui.toggleDiary()) ui.renderDiary(state, LOCATIONS); },
+  onSpeed: () => setSpeed((speedIdx + 1) % SPEEDS.length),
+  onAutoCam: () => { god.setAuto(!god.auto); ui.setAutoCam(god.auto); },
+  onCreator: (act, text) => creatorAction(act, text),
+  onDiary: () => { if (ui.toggleDiary()) ui.renderDiary(state); },
   onSaveKey: (key) => {
-    if (setApiKey(key)) {
-      ui.setKeyField(true);
-      ui.setKeyStatus('Key saved on this device. Testing…');
-      testKey();
-    } else {
-      ui.setKeyStatus('This browser refused to store the key (private mode?).', 'err');
-    }
+    if (setApiKey(key)) { ui.setKeyField(true); ui.setKeyStatus('Key saved on this device. Testing…'); testKey(); }
+    else ui.setKeyStatus('This browser refused to store the key (private mode?).', 'err');
   },
   onTestKey: () => testKey(),
-  onClearKey: () => {
-    clearApiKey();
-    ui.setKeyField(false);
-    ui.setKeyStatus('Key removed from this device.', 'ok');
-    refreshBrainPill();
-  },
+  onClearKey: () => { clearApiKey(); ui.setKeyField(false); ui.setKeyStatus('Key removed from this device.', 'ok'); refreshBrainPill(); },
   onModel: (id) => { setModel(id); ui.setKeyStatus(`Model: ${id}`); },
   onExport: () => {
-    const date = new Date().toISOString().slice(0, 10);
-    download(`mycel-memory-day${state.day}-${date}.json`, exportState(state));
+    download(`mycel-memory-day${state.day}-${new Date().toISOString().slice(0, 10)}.json`, exportState(state));
     ui.toast('Memory exported');
   },
   onImport: (text) => {
-    if (busy) { ui.toast('Wait until the day is over'); return; }
     try {
       const next = importState(text);
-      if (!confirm(`Replace the current memory (day ${state.day}) with the imported one (day ${next.day}, ${next.learnings.length} learnings)?`)) return;
-      state = next;
-      saveState(state);
-      afterStateChange();
-      ui.toast('Memory imported');
-    } catch (err) {
-      ui.toast(err.message || 'Import failed', 3500);
-    }
+      if (!confirm(`Replace the current colony (day ${state.day}) with the imported one (day ${next.day})? The page will reload.`)) return;
+      saveState(next);
+      location.reload();
+    } catch (err) { ui.toast(err.message || 'Import failed', 3500); }
   },
   onReset: () => {
-    if (busy) return;
-    if (!confirm('Delete the memory and start again from Day 1? (Export first if you want to keep it.)')) return;
+    if (!confirm('Delete the colony and start again from Day 1 with one Mycel? (Export first if you want to keep it.)')) return;
     clearState();
     location.reload();
   },
   onVolume: (v) => { unlockAudio(); audio.setVolume(v); },
   onMuteToggle: () => { unlockAudio(); audio.setMuted(!audio.muted); },
-  onSoundTest: (kind, value) => {
-    unlockAudio();
-    if (kind.startsWith('chirp:')) audio.chirp(kind.slice(6));
-    else if (kind === 'colony') audio.setColony(value);
-    else if (kind === 'awareness') audio.setStory({ awareness: value });
-    else if (kind === 'outage') audio.outage();
-    else if (kind === 'rain') audio.rain(!audio.raining);
-    else if (kind === 'build') audio.build();
-    else if (kind === 'watcher') audio.watcher();
-  },
-  onCopyCaption: async () => {
-    ui.toast((await copyText(lastCaption)) ? 'Caption copied' : 'Copy failed: select the text and copy it manually');
-  },
+  onCopyCaption: async () => { ui.toast((await copyText(lastCaption)) ? 'Caption copied' : 'Copy failed: select the text and copy it manually'); },
+  onTitleDismissed: () => startGame(),
 });
-
 async function testKey() {
   ui.setKeyStatus('Testing…');
   const r = await brain.testKey();
@@ -162,364 +189,241 @@ async function testKey() {
   refreshBrainPill();
 }
 
-function afterStateChange() {
-  applyGrowth();
-  ui.setDay(state.day, false);
-  ui.setStartEnabled(true, `Start Day ${state.day}`);
-  refreshSettingsPanel();
-  ui.renderDiary(state, LOCATIONS);
-}
-
-// ---------------------------------------------------------------------------
-// Sound: starts on the first tap / key press (browsers, and iPhone in particular, require it)
-// ---------------------------------------------------------------------------
-function unlockAudio() { audio.unlock(); }
-for (const ev of ['pointerdown', 'touchend', 'keydown']) window.addEventListener(ev, unlockAudio, { capture: true, passive: true });
-const refreshSound = () => ui.setSoundState({
-  volume: audio.volume, muted: audio.muted, running: audio.running, available: !!(window.AudioContext || window.webkitAudioContext),
-});
-audio.onChange(refreshSound);
-const colonySize = 1; // one Mycel so far; the colony comes with the story features
-audio.setColony(colonySize);
-ui.setColonyCount(colonySize);
-audio.setStory({ day: state.day, awareness: 0 });
-refreshSound();
-const CHIRP = { happy: 'excited', curious: 'curious', scared: 'scared', sad: 'sad', neutral: 'neutral' };
-
-ui.createLabels(LOCATIONS);
 ui.setDay(state.day, false);
 ui.setVertical(vertical);
-ui.setStartEnabled(true, `Start Day ${state.day}`);
+ui.setAutoCam(true);
+setSpeed(0);
 refreshSettingsPanel();
 refreshBrainPill();
+refreshSound();
 
 // ---------------------------------------------------------------------------
-// Layout (9:16 / 16:9) + low internal resolution
+// Layout
 // ---------------------------------------------------------------------------
 let W = 1, H = 1;
-const v3 = new THREE.Vector3();
-
-function toScreen(vec) {
-  vec.project(camera);
-  return [(vec.x + 1) / 2 * W, (1 - vec.y) / 2 * H, vec.z];
-}
-
 function layout() {
   const vw = window.innerWidth, vh = window.innerHeight;
   W = vw; H = vh;
-  // Desktop: pillarbox to 9:16. Phones held upright always use the full screen.
   const phoneUpright = isTouch && vw < vh;
   if (vertical && !phoneUpright && vw / vh > 9 / 16) W = Math.round(vh * 9 / 16);
   stage.style.width = `${W}px`;
   stage.style.height = `${H}px`;
-  const target = (W < H ? RENDER_HEIGHT.vertical : RENDER_HEIGHT.landscape) * (isTouch ? 0.9 : 1);
-  renderer.setPixelRatio(Math.min(1, target / H));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2));
   renderer.setSize(W, H, false);
   camera.aspect = W / H;
-  camera.fov = W < H ? 66 : 50;
+  camera.fov = W < H ? 52 : 38;
   camera.updateProjectionMatrix();
 }
-
 function setVerticalMode(on) {
-  vertical = on;
-  ui.setVertical(on);
-  prefs.vertical = on;
-  savePrefs(prefs);
-  layout();
+  vertical = on; ui.setVertical(on); prefs.vertical = on; savePrefs(prefs); layout();
 }
-
 window.addEventListener('resize', layout);
 window.visualViewport?.addEventListener('resize', layout);
 layout();
 
 // ---------------------------------------------------------------------------
-// Third-person camera: 'establish' (wide, slow drift), 'follow' (behind), 'talk' (close-up)
+// Day cycle + hive mind
 // ---------------------------------------------------------------------------
-const cam = {
-  mode: 'establish',
-  pos: new THREE.Vector3(), look: new THREE.Vector3(),
-  wantPos: new THREE.Vector3(), wantLook: new THREE.Vector3(),
+const timeLabel = (p) => (p < 0.08 ? 'Dawn' : p < 0.3 ? 'Morning' : p < 0.5 ? 'Midday' : p < 0.66 ? 'Afternoon' : p < 0.74 ? 'Dusk' : p < 0.97 ? 'Night' : 'Dawn');
+
+function hiveSummary() {
+  const s = colony.summary();
+  const lastEntry = state.diaryEntries.filter((d) => !d.legacy).at(-1);
+  return {
+    ...s,
+    yesterday: lastEntry?.events?.slice(0, 8) ?? [],
+    lastDiary: lastEntry?.text ?? '',
+    creatorLog: state.creatorLog.filter((c) => c.day >= s.day - 1).map((c) => c.text).slice(-6),
+    learnings: state.learnings.slice(-4).map((l) => l.takeaway),
+  };
+}
+
+async function morningPlan() {
+  const plan = await brain.planDay(hiveSummary());
+  refreshBrainPill();
+  colony.plan = plan;
+  if (plan.event === 'berry boom') colony.creator('berries');
+  if (plan.event === 'storm') setRain(true);
+  if (plan.event === 'great discovery') colony.awareness = Math.min(1, colony.awareness + 0.05);
+  ui.showThought('The Mycel think', plan.thought);
+  if (plan.watcherMessage) {
+    setTimeout(() => {
+      audio.watcher();
+      ui.showThought('Message to the Watcher', plan.watcherMessage, { watcher: true, ms: 8000 });
+      colony.event('watcher', `The Mycel wrote to the Watcher: “${plan.watcherMessage}”`);
+    }, 7000);
+  }
+}
+
+async function startGame() {
+  if (started) return;
+  started = true;
+  await ui.showBanner(`DAY ${state.day}`, state.day === 1 && !state.colony ? 'A single Mycel wakes up in the clearing' : `${colony.mycel.length} Mycel wake up`, 1700);
+  morningPlan();
+}
+
+let dayEnding = false;
+async function endDay() {
+  if (dayEnding) return;
+  dayEnding = true;
+  const finished = state.day;
+  const summary = { ...hiveSummary(), day: finished };
+  colony.startDay(finished + 1, null);
+  state.day = finished + 1;
+  state.colony = colony.serialize();
+  saveState(state);
+  ui.setDay(state.day);
+  ui.showBanner(`DAY ${state.day}`, `${colony.mycel.length} Mycel wake up`, 1500);
+  dayEnding = false;
+  morningPlan();
+
+  const text = await brain.writeDiary(summary);
+  refreshBrainPill();
+  state.diaryEntries.push({ day: finished, text, events: summary.events, population: summary.population, at: new Date().toISOString() });
+  saveState(state);
+  lastCaption = `🍄 THE MYCEL · Day ${finished} · ${summary.population} Mycel\n${text}\n#themycel #mycel #indiedev`;
+  ui.showDayCard(finished, text, `Mycel diary · ${summary.population} Mycel`);
+  refreshSettingsPanel();
+}
+
+// ---------------------------------------------------------------------------
+// Creator actions
+// ---------------------------------------------------------------------------
+function setRain(on) {
+  raining = on; rain.visible = on;
+  audio.rain(on);
+}
+const CREATOR_TEXT = {
+  berries: 'The Watcher made berries rain.', rain: 'The Watcher sent rain.', sun: 'The Watcher sent sunshine.',
+  fire: 'The Watcher lit the fire.', beetles: 'The Watcher sent thorn beetles.', spores: 'The Watcher gifted spores.',
+  knowledge: 'The Watcher dropped a page of knowledge.',
 };
-const portrait = () => W < H;
-
-function talkCameraPos(out) {
-  const f = LOCATIONS[currentLoc].facing;
-  const b = being.root.position;
-  const side = { x: f.z, z: -f.x };
-  const dist = portrait() ? 3.6 : 3;
-  return out.set(b.x + f.x * dist + side.x * 1.1, b.y + 1.15, b.z + f.z * dist + side.z * 1.1);
-}
-
-function cameraTargets(t) {
-  const b = being.root.position;
-  const f = LOCATIONS[currentLoc].facing;
-  if (cam.mode === 'follow') {
-    const yaw = being.mover.rotation.y;
-    const fx = Math.sin(yaw), fz = Math.cos(yaw);
-    const back = portrait() ? 5.5 : 6.5;
-    cam.wantPos.set(b.x - fx * back, b.y + 2.4, (b.z - fz * back) * 0.8);
-    cam.wantLook.set(b.x + fx * 4, b.y + 1.3, b.z + fz * 4);
-  } else if (cam.mode === 'talk') {
-    talkCameraPos(cam.wantPos);
-    cam.wantLook.set(b.x - f.x * 0.8, b.y + (portrait() ? 1.0 : 0.8), b.z - f.z * 0.8);
+async function creatorAction(act, text) {
+  unlockAudio();
+  if (!started) ui.dismissTitle();
+  const log = (t) => state.creatorLog.push({ day: state.day, action: act, text: t });
+  if (act === 'rain') {
+    setRain(!raining);
+    log(raining ? CREATOR_TEXT.rain : 'The Watcher stopped the rain.');
+    colony.event('creator', raining ? 'Rain began to fall. The berry bushes drink.' : 'The rain stopped.', null);
+  } else if (act === 'sun') {
+    setRain(false);
+    colony.mycel.forEach((m) => colony.setEmotion(m, 'happy', 3));
+    colony.event('creator', 'Warm sunshine broke through. The Mycel glowed with joy.', colony.centroid(), 5);
+    log(CREATOR_TEXT.sun);
+  } else if (act === 'message') {
+    colony.creator('message', text);
+    audio.watcher(2.2);
+    ui.showThought('The Watcher', text, { watcher: true, ms: 7000 });
+    log(`The Watcher said: "${text}"`);
+  } else if (act === 'knowledge') {
+    const folder = Math.random() < 0.6 ? 'library' : 'cafe';
+    const m = colony.mycel[Math.floor(Math.random() * colony.mycel.length)];
+    if (m) colony.setEmotion(m, 'curious', 4);
+    ui.toast('A page falls from the sky…');
+    const r = await brain.read(folder, { day: state.day, bookmarks: state.bookmarks, recentDiary: [] });
+    refreshBrainPill();
+    if (r) {
+      state.bookmarks[r.bookmarkKey] = r.finished ? 999 : r.nextBookmark;
+      state.learnings.push({ day: state.day, title: r.title, source: r.source, takeaway: r.takeaway, at: new Date().toISOString() });
+      colony.creator('knowledge');
+      colony.event('learn', `${m?.name ?? 'A Mycel'} read “${r.title}”: ${r.takeaway}`, m, 6);
+      ui.showThought(`${m?.name ?? 'A Mycel'} read “${r.title}”`, r.thought);
+      audio.chirp('curious');
+    }
+    log(CREATOR_TEXT.knowledge);
   } else {
-    const side = { x: f.z, z: -f.x };
-    const sway = Math.sin(t * 0.07) * 1.5;
-    const dist = portrait() ? 11 : 15;
-    cam.wantPos.set(b.x + side.x * dist + f.x * (4.5 + sway), b.y + 2, b.z + side.z * dist + f.z * (4.5 + sway));
-    cam.wantLook.set(b.x - side.x * 8 + f.x * 1.2, b.y + (portrait() ? 4.5 : 3.2), b.z - side.z * 8 + f.z * 1.2);
+    colony.creator(act);
+    if (act === 'fire') audio.knock();
+    log(CREATOR_TEXT[act] ?? act);
   }
+  ui.toggleCreator(false);
 }
 
-function updateCamera(dt, t, snap = false) {
-  cameraTargets(t);
-  const k = snap ? 1 : 1 - Math.exp(-dt * (cam.mode === 'follow' ? 1.8 : 1.1));
-  cam.pos.lerp(cam.wantPos, k);
-  cam.look.lerp(cam.wantLook, k);
-  camera.position.copy(cam.pos);
-  camera.lookAt(cam.look);
+// ---------------------------------------------------------------------------
+// Simulation step + render loop
+// ---------------------------------------------------------------------------
+let simTime = 0;
+function simulate(dt) {
+  simTime += dt;
+  colony.cameraPos = camera.position;
+  colony.update(dt);
+  if (raining) {
+    for (const b of world.bushes) b.regrow += dt * 0.8; // rain makes berries grow faster
+    if (world.fire.lit) world.fire.fuel -= dt / 160;
+  }
+  if (colony.phase >= 1) endDay();
 }
 
-function setCamMode(mode) {
-  cam.mode = mode;
-  if (mode === 'talk') being.faceToward(talkCameraPos(v3).x, v3.z);
-}
-updateCamera(0, 0, true);
-
-// ---------------------------------------------------------------------------
-// Time of day (0 = dusk, 0.5 = evening, 1 = night)
-// ---------------------------------------------------------------------------
-let timeOfDay = state.daysCompleted > 0 ? 1 : 0.05;
-let timeTarget = timeOfDay;
-world.setTimeOfDay(timeOfDay);
-if (state.daysCompleted > 0) {
-  being.setSleeping(true);
-  ui.setStatus('Night · sleeping at home');
-} else {
-  ui.setStatus('Dusk · at home');
-}
-const timeLabel = () => (timeOfDay < 0.3 ? 'Dusk' : timeOfDay < 0.6 ? 'Evening' : timeOfDay < 0.9 ? 'Night' : 'Late night');
-
-// ---------------------------------------------------------------------------
-// Render loop
-// ---------------------------------------------------------------------------
-let activeLabel = null;
 const clock = new THREE.Clock();
+let uiTimer = 0, moodTimer = 0;
+const visible = [];
 function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05);
-  const t = clock.elapsedTime;
-  if (Math.abs(timeTarget - timeOfDay) > 0.0005) {
-    timeOfDay += (timeTarget - timeOfDay) * Math.min(1, dt * 0.5);
-    world.setTimeOfDay(timeOfDay);
-  }
-  being.update(dt, t);
-  updateCamera(dt, t);
-  world.update(dt, t, camera);
+  const realDt = Math.min(clock.getDelta(), 0.1);
+  const speed = started ? SPEEDS[speedIdx] : 0;
+  let simDt = realDt * speed;
+  while (simDt > 0) { const step = Math.min(simDt, 0.05); simulate(step); simDt -= step; }
 
-  const [bx, by] = toScreen(being.getHeadPosition(v3));
-  ui.positionBubble(bx, by);
-  if (activeLabel) {
-    const [lx, ly, lz] = toScreen(v3.set(...LOCATIONS[activeLabel].label));
-    ui.positionLabel(activeLabel, lx, ly, lz < 1 && lx > -50 && lx < W + 50 && ly > -20 && ly < H);
+  const daylight = world.setPhase(Math.min(colony.phase, 0.9999));
+  world.update(realDt * Math.max(speed, started ? 1 : 0.5), simTime, camera);
+  mycelRenderer.setNightGlow(0.55 + (1 - daylight) * 0.9);
+  visible.length = 0;
+  for (const m of colony.mycel) if (!m.hidden) visible.push(m);
+  mycelRenderer.update(visible, simTime, camera);
+
+  if (raining) {
+    for (let i = 0; i < RAIN_N; i++) {
+      let y = rainPos[i * 3 + 1] - realDt * 22;
+      if (y < 0) y += 30;
+      rainPos[i * 3 + 1] = y;
+    }
+    rain.position.set(god.state.target.x, 0, god.state.target.z);
+    rainGeo.attributes.position.needsUpdate = true;
   }
+
+  god.update(realDt, { focus: colony.focus(), spread: colony.spread(), heightAt: world.heightAt, portrait: W < H });
   renderer.render(scene, camera);
+
+  uiTimer -= realDt;
+  if (uiTimer <= 0) {
+    uiTimer = 0.25;
+    ui.setColonyCount(colony.mycel.length);
+    const R = colony.resources;
+    ui.setResources({ food: R.food, wood: R.wood, stone: R.stone, tools: colony.countTool('axe') + colony.countTool('spear') });
+    ui.setStatus(`${timeLabel(colony.phase)} · ${colony.plan.goal}`);
+  }
+  moodTimer -= realDt;
+  if (moodTimer <= 0 && audio.running) {
+    moodTimer = 1;
+    audio.setMood(colony.groupMood());
+    audio.setColony(colony.mycel.length);
+    audio.setDaylight(daylight);
+    audio.setStory({ day: state.day, awareness: colony.awareness });
+    audio.setFire(world.fire.level * nearness(world.fire));
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
 // ---------------------------------------------------------------------------
-// The day sequence
-// ---------------------------------------------------------------------------
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function setActiveLabel(id) {
-  activeLabel = id;
-  ui.setActiveLabel(id);
-}
-
-async function walkTo(locationId) {
-  const target = LOCATIONS[locationId].node;
-  const points = findPath(currentNode, target).slice(1);
-  setCamMode('follow');
-  being.setEmotion('neutral');
-  await being.walk(points);
-  currentNode = target;
-  currentLoc = locationId;
-}
-
-/** Ask the brain while the face shows "..." (Gemini calls can take a moment). */
-async function think(promise) {
-  being.setEmotion('thinking');
-  audio.chirp('thinking');
-  const [result] = await Promise.all([promise, wait(900)]);
-  refreshBrainPill();
-  return result;
-}
-
-async function say(thought, meta, mood = 'neutral') {
-  being.setEmotion(mood);
-  audio.chirp(CHIRP[mood] ?? 'neutral');
-  await ui.showThought(thought, meta);
-  await wait(1800 + thought.length * 30);
-  ui.hideThought();
-  being.setEmotion('neutral');
-  await wait(400);
-}
-
-function brainState(phase, today, stopsPlanned) {
-  return {
-    day: state.day,
-    phase,
-    today: [...today],
-    stopsPlanned,
-    location: currentLoc,
-    visited: { ...state.visited },
-    bookmarks: { ...state.bookmarks },
-    recentDiary: state.diary.slice(-30),
-    recentLearnings: state.learnings.slice(-12),
-    recentEntries: state.diaryEntries.slice(-2),
-  };
-}
-
-function addLearning(day, location, takeaway, reading) {
-  if (!takeaway) return;
-  const before = state.stage;
-  state.learnings.push({
-    day, location, takeaway,
-    source: reading?.source ?? '', title: reading?.title ?? '', at: new Date().toISOString(),
-  });
-  state.stage = stageFor(state.learnings.length);
-  applyGrowth();
-  return state.stage > before ? STAGES[state.stage] : null;
-}
-
-async function runDay() {
-  if (busy) return;
-  busy = true;
-  ui.toggleDiary(false);
-  ui.toggleSettings(false);
-  ui.hideDayCard();
-  ui.setStartEnabled(false, 'Exploring…');
-  const day = state.day;
-  audio.setStory({ day, awareness: 0 });
-
-  being.setSleeping(false);
-  ui.setStatus('Dusk · at home');
-  await ui.showBanner(`DAY ${day}`, day === 1 ? 'A Mycel wakes up for the first time' : 'The city lights come on', 1600);
-  timeOfDay = 0; timeTarget = 0.05; world.setTimeOfDay(timeOfDay);
-
-  const today = [];
-  const stops = []; // for the diary entry
-  const todaysLearnings = [];
-  let phase = 'wake';
-  const stopsPlanned = Math.random() < 0.5 ? 3 : 4;
-  setCamMode('talk');
-
-  for (let guard = 0; guard < 10; guard++) {
-    const action = await think(brain.decideNextAction(brainState(phase, today, stopsPlanned)));
-
-    if (action.type === 'wake') {
-      phase = 'explore';
-      being.celebrate();
-      await say(action.thought, '🏠 Home · dusk', action.mood);
-      continue;
-    }
-
-    if (action.type === 'visit') {
-      const loc = LOCATIONS[action.location];
-      timeTarget = 0.08 + ((today.length + 1) / (stopsPlanned + 1)) * 0.75;
-      setActiveLabel(action.location);
-      ui.setStatus(`${timeLabel()} · walking to the ${loc.name}`);
-      await walkTo(action.location);
-      setActiveLabel(null);
-      setCamMode('talk');
-      ui.setStatus(`${timeLabel()} · at the ${loc.name}`);
-
-      // Library / café: read a chunk and keep a one-sentence takeaway.
-      let reading = null;
-      if (loc.verb) {
-        ui.setStatus(`${timeLabel()} · ${loc.verb.toLowerCase()} at the ${loc.name}`);
-        reading = await think(brain.read(action.location, brainState(phase, today, stopsPlanned)));
-      }
-      const thought = reading?.thought || action.thought;
-      const mood = reading?.mood || action.mood;
-      const takeaway = reading?.takeaway || action.thought; // park / shop: what it noticed
-      being.celebrate();
-      const meta = reading ? `${loc.emoji} ${loc.verb}: ${reading.title}` : `${loc.emoji} ${loc.name}`;
-      await say(thought, meta, mood);
-
-      today.push(action.location);
-      state.visited[action.location] = (state.visited[action.location] ?? 0) + 1;
-      if (reading) state.bookmarks[reading.bookmarkKey] = reading.finished ? 999 : reading.nextBookmark;
-      const entry = {
-        day, location: action.location, thought, mood, takeaway,
-        reading: reading ? { title: reading.title, source: reading.source, excerpt: reading.chunk.slice(0, 160) } : null,
-        at: new Date().toISOString(),
-      };
-      state.diary.push(entry);
-      stops.push(entry);
-      todaysLearnings.push({ takeaway });
-      const unlocked = addLearning(day, action.location, takeaway, reading);
-      saveState(state);
-      if (reading) ui.toast(`Learned: ${takeaway}`, 4200);
-      if (unlocked) {
-        being.setEmotion('happy');
-        audio.chirp('excited');
-        await ui.showBanner('NEW STAGE', unlocked.name, 2200);
-      }
-      continue;
-    }
-
-    // goHome
-    setActiveLabel('home');
-    timeTarget = 0.92;
-    ui.setStatus(`${timeLabel()} · going home`);
-    await walkTo('home');
-    setActiveLabel(null);
-    setCamMode('talk');
-    timeTarget = 1;
-    ui.setStatus('Night · at home');
-    await say(action.thought, '🏠 Home · night', action.mood);
-    state.diary.push({ day, location: 'home', thought: action.thought, mood: action.mood, takeaway: '', reading: null, at: new Date().toISOString() });
-    break;
-  }
-
-  // End of day: diary entry + caption
-  ui.setStatus('Night · writing the diary');
-  const text = await think(brain.writeDiary({ day, stops, learnings: todaysLearnings }));
-  state.diaryEntries.push({ day, text, places: today, at: new Date().toISOString() });
-  lastCaption = `🍄 THE MYCEL · Day ${day}\n${text}\n#themycel #mycel #indiedev`;
-
-  setActiveLabel(null);
-  state.day += 1;
-  state.daysCompleted += 1;
-  saveState(state);
-  being.setSleeping(true);
-  setCamMode('establish');
-  ui.setStatus('Night · sleeping at home');
-  ui.setStartEnabled(true, `Start Day ${state.day}`);
-  refreshSettingsPanel();
-  busy = false;
-  await ui.showDayCard(day, text);
-  ui.setDay(state.day);
-}
-
-// ---------------------------------------------------------------------------
-// Keyboard shortcuts (desktop)
+// Keyboard (desktop)
 // ---------------------------------------------------------------------------
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-  if (e.target instanceof HTMLButtonElement && (e.key === ' ' || e.key === 'Enter')) return;
+  if (ui.titleVisible()) { ui.dismissTitle(); return; }
   const k = e.key.toLowerCase();
-  if (ui.titleVisible()) { document.getElementById('title-screen').click(); return; }
-  if (k === ' ') { e.preventDefault(); runDay(); }
-  else if (k === 'h') ui.toggleClean();
+  if (k === 'h') ui.toggleClean();
   else if (k === 'v') setVerticalMode(!vertical);
-  else if (k === 'd') { if (ui.toggleDiary()) ui.renderDiary(state, LOCATIONS); }
+  else if (k === 's') setSpeed((speedIdx + 1) % SPEEDS.length);
+  else if (k === 'c') { god.setAuto(!god.auto); ui.setAutoCam(god.auto); }
+  else if (k === 'd') { if (ui.toggleDiary()) ui.renderDiary(state); }
 });
 
-// Handy for debugging / recording from the console
-window.aiBeing = {
-  get state() { return state; }, runDay, setCamMode, being, audio,
-  setTime: (t) => { timeTarget = timeOfDay = t; world.setTimeOfDay(t); },
+// Debug / test hooks (console)
+window.mycel = {
+  get colony() { return colony; }, get state() { return state; }, world, god, audio, renderer,
+  setSpeed, startGame, creator: (act, text) => creatorAction(act, text),
+  /** fast-forward N simulated seconds without rendering (tests) */
+  skip(seconds) { const n = Math.ceil(seconds / 0.05); for (let i = 0; i < n; i++) { simulate(0.05); world.update(0.05, simTime, camera); } },
+  dayLength: DAY_SECONDS,
 };
